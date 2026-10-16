@@ -5,9 +5,43 @@ import { PrismaService } from '../common/prisma.service';
 export class ChannelsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAllPublic() {
-    return this.prisma.channel.findMany({
-      where: { isActive: true },
+  async findAllPublic(token?: string) {
+    const host = (process.env.APP_URL || 'https://iptv.oussamma.tn').replace(/\/$/, '');
+
+    let targetToken = token;
+    let allowedChannelIds: string[] | null = null;
+
+    if (targetToken) {
+      try {
+        const share = await this.prisma.shareAccess.findFirst({
+          where: {
+            OR: [{ token: targetToken }, { id: targetToken }],
+            isActive: true,
+          },
+          include: { allowedChannels: true },
+        });
+        if (share) {
+          targetToken = share.token;
+          allowedChannelIds = share.allowedChannels.map((ac) => ac.channelId);
+        }
+      } catch {}
+    }
+
+    if (!targetToken) {
+      const defaultShare = await this.prisma.shareAccess.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      targetToken = defaultShare ? defaultShare.token : 'public_stream';
+    }
+
+    const whereClause: any = { isActive: true };
+    if (allowedChannelIds && allowedChannelIds.length > 0) {
+      whereClause.id = { in: allowedChannelIds };
+    }
+
+    const channels = await this.prisma.channel.findMany({
+      where: whereClause,
       include: {
         category: true,
         sources: {
@@ -16,6 +50,35 @@ export class ChannelsService {
         },
       },
       orderBy: { sortOrder: 'asc' },
+    });
+
+    return channels.map((ch, index) => {
+      const streamUrl = `${host}/api/v1/stream/${ch.id}/live.m3u8?token=${targetToken}`;
+      return {
+        id: ch.id,
+        name: ch.name,
+        slug: ch.slug,
+        num: index + 1,
+        streamUrl,
+        url: streamUrl,
+        directUrl: streamUrl,
+        logo: ch.logoUrl || '',
+        logoUrl: ch.logoUrl || '',
+        icon: ch.logoUrl || '',
+        category: ch.category?.name || 'Général',
+        categoryName: ch.category?.name || 'Général',
+        categoryId: ch.categoryId,
+        group: ch.category?.name || 'Général',
+        country: ch.country || 'TN',
+        language: ch.language || 'ara',
+        epgId: ch.epgChannelId || ch.slug,
+        epgChannelId: ch.epgChannelId || ch.slug,
+        sources: ch.sources.map((s) => ({
+          id: s.id,
+          name: s.name,
+          type: s.type,
+        })),
+      };
     });
   }
 

@@ -80,6 +80,7 @@ model Channel {
   category     Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   sources      Source[]      @relation("ChannelSources")
   shareItems   ShareChannel[]
+  playbackSessions PlaybackSession[]
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 }
@@ -119,6 +120,7 @@ model PlaybackSession {
   startedAt     DateTime    @default(now())
   lastPingAt    DateTime    @default(now())
   shareAccess   ShareAccess @relation(fields: [shareAccessId], references: [id], onDelete: Cascade)
+  channel       Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   @@index([shareAccessId, lastPingAt])
 }

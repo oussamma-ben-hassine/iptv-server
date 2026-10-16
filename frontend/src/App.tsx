@@ -27,6 +27,12 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpToLine,
+  Users,
+  Eye,
+  Zap,
+  StopCircle,
+  Infinity as InfinityIcon,
+  HelpCircle,
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -42,6 +48,13 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'channels' | 'shares' | 'epg'>('dashboard');
   const [stats, setStats] = useState<any>(null);
+  const [analytics, setAnalytics] = useState<any>({
+    activeCount: 0,
+    totalSessionsAllTime: 0,
+    estimatedBandwidthMbps: '0.0',
+    topChannels: [],
+    activeSessions: [],
+  });
   const [channels, setChannels] = useState<any[]>([]);
   const [sources, setSources] = useState<any[]>([]);
   const [shares, setShares] = useState<any[]>([]);
@@ -64,13 +77,14 @@ export default function App() {
   const [newChannel, setNewChannel] = useState({ name: '', slug: '', logoUrl: '', categoryId: '', country: 'TN' });
   
   const [showAddShareModal, setShowAddShareModal] = useState(false);
-  const [newShare, setNewShare] = useState({ name: '', maxSessions: 2, channelIds: [] as string[] });
+  const [newShare, setNewShare] = useState({ name: '', maxSessions: 2, isUnlimited: false, channelIds: [] as string[] });
 
   const [showEditShareModal, setShowEditShareModal] = useState(false);
   const [editingShare, setEditingShare] = useState<{
     id: string;
     name: string;
     maxSessions: number;
+    isUnlimited: boolean;
     isActive: boolean;
     channelIds: string[];
   } | null>(null);
@@ -105,12 +119,13 @@ export default function App() {
 
   const loadData = async () => {
     try {
-      const [statsRes, chRes, srcRes, shRes, catRes] = await Promise.all([
+      const [statsRes, chRes, srcRes, shRes, catRes, analyticsRes] = await Promise.all([
         axios.get('/api/v1/admin/dashboard').catch(() => ({ data: null })),
         axios.get('/api/v1/admin/channels').catch(() => ({ data: [] })),
         axios.get('/api/v1/sources').catch(() => ({ data: [] })),
         axios.get('/api/v1/admin/shares').catch(() => ({ data: [] })),
         axios.get('/api/v1/categories').catch(() => ({ data: [] })),
+        axios.get('/api/v1/admin/analytics').catch(() => ({ data: null })),
       ]);
 
       if (statsRes.data) setStats(statsRes.data);
@@ -118,8 +133,32 @@ export default function App() {
       if (srcRes.data) setSources(srcRes.data);
       if (shRes.data) setShares(shRes.data);
       if (catRes.data) setCategories(catRes.data);
+      if (analyticsRes.data) setAnalytics(analyticsRes.data);
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  // Rafraîchissement automatique des stats temps réel toutes les 5 secondes sur l'onglet dashboard
+  useEffect(() => {
+    if (!user || activeTab !== 'dashboard') return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await axios.get('/api/v1/admin/analytics');
+        if (res.data) setAnalytics(res.data);
+      } catch {}
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [user, activeTab]);
+
+  const handleTerminateSession = async (sessionId: string, channelName: string) => {
+    if (!confirm(`Couper immédiatement la session de streaming sur "${channelName}" ?`)) return;
+    try {
+      await axios.delete(`/api/v1/admin/sessions/${sessionId}`);
+      const res = await axios.get('/api/v1/admin/analytics');
+      if (res.data) setAnalytics(res.data);
+    } catch (e: any) {
+      alert(`Erreur: ${e.response?.data?.message || e.message}`);
     }
   };
 
@@ -385,9 +424,13 @@ export default function App() {
   const handleCreateShare = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await axios.post('/api/v1/admin/shares', newShare);
+      await axios.post('/api/v1/admin/shares', {
+        name: newShare.name,
+        maxSessions: newShare.isUnlimited ? 0 : newShare.maxSessions,
+        channelIds: newShare.channelIds,
+      });
       setShowAddShareModal(false);
-      setNewShare({ name: '', maxSessions: 2, channelIds: [] });
+      setNewShare({ name: '', maxSessions: 2, isUnlimited: false, channelIds: [] });
       setShareSearch('');
       setShareCategoryFilter('');
       loadData();
@@ -398,10 +441,12 @@ export default function App() {
 
   const handleOpenEditShare = (sh: any) => {
     const existingIds = (sh.allowedChannels || []).map((item: any) => item.channelId || item.channel?.id || item.id);
+    const isUnlimited = (sh.maxSessions ?? 2) <= 0;
     setEditingShare({
       id: sh.id,
       name: sh.name,
-      maxSessions: sh.maxSessions || 2,
+      maxSessions: isUnlimited ? 2 : sh.maxSessions,
+      isUnlimited,
       isActive: sh.isActive ?? true,
       channelIds: existingIds,
     });
@@ -416,7 +461,7 @@ export default function App() {
     try {
       await axios.put(`/api/v1/admin/shares/${editingShare.id}`, {
         name: editingShare.name,
-        maxSessions: editingShare.maxSessions,
+        maxSessions: editingShare.isUnlimited ? 0 : editingShare.maxSessions,
         isActive: editingShare.isActive,
         channelIds: editingShare.channelIds,
       });
@@ -634,24 +679,152 @@ export default function App() {
         {/* TAB 1: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
+            {/* Primary Stat Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800">
-                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Chaînes Actives</div>
-                <div className="text-3xl font-extrabold text-white">{stats?.channelsCount || channels.length}</div>
+              <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 relative overflow-hidden">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Spectateurs en Direct</div>
+                  <span className="flex h-2.5 w-2.5 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                  </span>
+                </div>
+                <div className="text-3xl font-extrabold text-white flex items-baseline gap-2">
+                  <span>{analytics?.activeCount ?? 0}</span>
+                  <span className="text-xs font-normal text-emerald-400">en temps réel</span>
+                </div>
               </div>
+
               <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800">
-                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Sources Connectées</div>
-                <div className="text-3xl font-extrabold text-emerald-400">{stats?.sourcesCount || sources.length}</div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Bande Passante Direct</div>
+                  <Zap className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="text-3xl font-extrabold text-amber-400 flex items-baseline gap-1.5">
+                  <span>{analytics?.estimatedBandwidthMbps ?? '0.0'}</span>
+                  <span className="text-xs font-normal text-slate-400">Mbps</span>
+                </div>
               </div>
+
               <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800">
-                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Accès M3U Actifs</div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Chaînes Actives</div>
+                  <Tv className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div className="text-3xl font-extrabold text-emerald-400">{stats?.channelsCount || channels.length}</div>
+              </div>
+
+              <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Accès M3U Configurés</div>
+                  <Share2 className="w-4 h-4 text-blue-400" />
+                </div>
                 <div className="text-3xl font-extrabold text-blue-400">{stats?.sharesCount || shares.length}</div>
               </div>
-              <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800">
-                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Sessions de Lecture</div>
-                <div className="text-3xl font-extrabold text-amber-400">{stats?.activeSessionsCount || 0}</div>
-              </div>
             </div>
+
+            {/* Real-time Streaming Table (Who is watching what) */}
+            <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-white text-base flex items-center gap-2">
+                  <Eye className="w-5 h-5 text-emerald-400" />
+                  Spectateurs en Direct (Temps Réel)
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {analytics?.activeSessions?.length || 0} actif(s)
+                  </span>
+                </h3>
+                <span className="text-xs text-slate-500">Mise à jour toutes les 5s</span>
+              </div>
+
+              {(!analytics?.activeSessions || analytics.activeSessions.length === 0) ? (
+                <div className="py-12 text-center text-slate-500 text-xs">
+                  Aucun spectateur en direct pour le moment.<br />
+                  <span className="text-slate-600">Dès qu'un lecteur externe ou navigateur lit un flux, il s'affiche ici avec son adresse IP, la chaîne regardée et la durée.</span>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-300">
+                    <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
+                      <tr>
+                        <th className="py-3 px-4 font-semibold">Accès / Utilisateur</th>
+                        <th className="py-3 px-4 font-semibold">Chaîne en direct</th>
+                        <th className="py-3 px-4 font-semibold">Adresse IP</th>
+                        <th className="py-3 px-4 font-semibold">Lecteur / Appareil</th>
+                        <th className="py-3 px-4 font-semibold">Dernier Ping</th>
+                        <th className="py-3 px-4 font-semibold text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {analytics.activeSessions.map((s: any) => {
+                        const secondsAgo = Math.max(0, Math.floor((Date.now() - new Date(s.lastPingAt).getTime()) / 1000));
+                        return (
+                          <tr key={s.id} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="py-3 px-4 font-semibold text-white">
+                              <div className="flex items-center gap-2">
+                                <Users className="w-3.5 h-3.5 text-blue-400" />
+                                <span>{s.share?.name || 'Accès Inconnu'}</span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-2">
+                                {s.channel?.logoUrl && (
+                                  <img src={s.channel.logoUrl} alt="" className="w-5 h-5 rounded object-contain bg-slate-950" />
+                                )}
+                                <span className="font-medium text-emerald-300">{s.channel?.name || 'Chaîne'}</span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 font-mono text-slate-400">{s.clientIp}</td>
+                            <td className="py-3 px-4 max-w-xs truncate text-slate-400" title={s.userAgent}>
+                              {s.userAgent?.length > 40 ? s.userAgent.substring(0, 40) + '...' : s.userAgent}
+                            </td>
+                            <td className="py-3 px-4 text-emerald-400 font-medium">
+                              il y a {secondsAgo}s
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                onClick={() => handleTerminateSession(s.id, s.channel?.name || 'Chaîne')}
+                                className="py-1 px-2.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"
+                                title="Couper immédiatement ce flux"
+                              >
+                                <StopCircle className="w-3.5 h-3.5" /> Couper la session
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Top Channels */}
+            {analytics?.topChannels && analytics.topChannels.length > 0 && (
+              <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800">
+                <h3 className="font-bold text-white text-base mb-4 flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-amber-400" />
+                  Chaînes les Plus Regardées en ce Moment
+                </h3>
+                <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  {analytics.topChannels.map((tc: any, idx: number) => (
+                    <div key={tc.channelId} className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-6 h-6 rounded-full bg-slate-900 text-xs font-bold text-amber-400 flex items-center justify-center border border-slate-800">
+                          #{idx + 1}
+                        </span>
+                        {tc.logoUrl && (
+                          <img src={tc.logoUrl} alt="" className="w-5 h-5 rounded object-contain bg-slate-900" />
+                        )}
+                        <span className="font-medium text-xs text-white">{tc.name}</span>
+                      </div>
+                      <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                        {tc.count} spectateur{tc.count > 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Quick Status */}
             <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800">
@@ -1023,22 +1196,55 @@ export default function App() {
                         </div>
                       </div>
                       <div className="text-xs text-slate-400 space-y-1 mb-4">
-                        <div>Sessions max simultanées : <strong className="text-slate-200">{sh.maxSessions}</strong></div>
+                        <div className="flex items-center gap-1.5">
+                          <span>Sessions max simultanées :</span>
+                          {sh.maxSessions <= 0 ? (
+                            <span className="inline-flex items-center gap-1 font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded text-[11px] border border-emerald-500/20">
+                              <InfinityIcon className="w-3.5 h-3.5" /> Illimitées (aucun quota)
+                            </span>
+                          ) : (
+                            <strong className="text-slate-200">{sh.maxSessions} écran(s)</strong>
+                          )}
+                        </div>
                         <div>
                           Chaînes autorisées : <strong className="text-slate-200">{sh.allowedChannels?.length || 0}</strong> / {channels.length}
                         </div>
                       </div>
 
                       {sh.isActive && (
-                        <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs font-mono text-slate-300">
-                          <span className="truncate mr-2">{m3uUrl}</span>
-                          <button
-                            onClick={() => copyToClipboard(m3uUrl)}
-                            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white shrink-0"
-                            title="Copier le lien M3U"
-                          >
-                            <Copy className="w-4 h-4" />
-                          </button>
+                        <div className="space-y-2">
+                          <div>
+                            <div className="text-[11px] text-slate-400 font-semibold mb-1 flex items-center justify-between">
+                              <span>Playlist M3U Standard :</span>
+                            </div>
+                            <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs font-mono text-slate-300">
+                              <span className="truncate mr-2">{m3uUrl}</span>
+                              <button
+                                onClick={() => copyToClipboard(m3uUrl)}
+                                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white shrink-0"
+                                title="Copier le lien M3U"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-[11px] text-slate-400 font-semibold mb-1 flex items-center justify-between">
+                              <span>Connecteur API (TV Player / Application externe) :</span>
+                              <span className="text-[10px] text-emerald-400 font-normal">Recommandé</span>
+                            </div>
+                            <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-xs font-mono text-emerald-400">
+                              <span className="truncate mr-2">{window.location.origin}/api/v1/channels?token={sh.token}</span>
+                              <button
+                                onClick={() => copyToClipboard(`${window.location.origin}/api/v1/channels?token=${sh.token}`)}
+                                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white shrink-0"
+                                title="Copier l'URL d'API pour TV Player"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1273,15 +1479,34 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-400 text-xs mb-1">Nombre maximal d'écrans simultanés</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={newShare.maxSessions}
-                    onChange={(e) => setNewShare({ ...newShare, maxSessions: parseInt(e.target.value) || 2 })}
-                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-slate-400 text-xs">Connexions simultanées</label>
+                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-emerald-400 font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={newShare.isUnlimited}
+                        onChange={(e) => setNewShare({ ...newShare, isUnlimited: e.target.checked })}
+                        className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
+                      />
+                      <InfinityIcon className="w-3.5 h-3.5" />
+                      <span>Illimité (sans quota)</span>
+                    </label>
+                  </div>
+                  {newShare.isUnlimited ? (
+                    <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-xs text-emerald-300 font-medium flex items-center gap-2">
+                      <InfinityIcon className="w-4 h-4 text-emerald-400" />
+                      <span>Connexions simultanées infinies autorisées</span>
+                    </div>
+                  ) : (
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={newShare.maxSessions}
+                      onChange={(e) => setNewShare({ ...newShare, maxSessions: parseInt(e.target.value) || 2 })}
+                      className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  )}
                 </div>
               </div>
 
@@ -1510,15 +1735,34 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-400 text-xs mb-1">Nombre maximal d'écrans simultanés</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={editingShare.maxSessions}
-                    onChange={(e) => setEditingShare({ ...editingShare, maxSessions: parseInt(e.target.value) || 2 })}
-                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-slate-400 text-xs">Connexions simultanées</label>
+                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-emerald-400 font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={editingShare.isUnlimited}
+                        onChange={(e) => setEditingShare({ ...editingShare, isUnlimited: e.target.checked })}
+                        className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
+                      />
+                      <InfinityIcon className="w-3.5 h-3.5" />
+                      <span>Illimité</span>
+                    </label>
+                  </div>
+                  {editingShare.isUnlimited ? (
+                    <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-xs text-emerald-300 font-medium flex items-center gap-2">
+                      <InfinityIcon className="w-4 h-4 text-emerald-400" />
+                      <span>Connexions simultanées illimitées</span>
+                    </div>
+                  ) : (
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={editingShare.maxSessions}
+                      onChange={(e) => setEditingShare({ ...editingShare, maxSessions: parseInt(e.target.value) || 2 })}
+                      className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  )}
                 </div>
                 <div className="flex items-center pt-5">
                   <label className="flex items-center gap-2 cursor-pointer text-slate-300 text-xs">

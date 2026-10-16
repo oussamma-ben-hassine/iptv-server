@@ -26,7 +26,7 @@ export class StreamingService {
     }
 
     if (token === 'admin_preview') {
-      return { share: { name: 'Admin Preview', maxSessions: 99, token: 'admin_preview' }, session: null };
+      return { share: { name: 'Admin Preview', maxSessions: 0, token: 'admin_preview' }, session: null };
     }
 
     const share = await this.sharesService.validateAccess(token);
@@ -37,30 +37,122 @@ export class StreamingService {
       throw new ForbiddenException('Cette chaîne n\'est pas autorisée pour votre accès');
     }
 
-    // Gestion des sessions simultanées
-    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-    const activeSessions = await this.prisma.playbackSession.count({
-      where: {
-        shareAccessId: share.id,
-        lastPingAt: { gte: tenMinutesAgo },
-      },
-    });
+    // Gestion des sessions simultanées (si maxSessions > 0, sinon 0 = illimité)
+    const twoMinutesAgo = new Date(Date.now() - 2.5 * 60 * 1000);
+    const clientIp = ip || 'unknown';
+    const userAgent = ua ? ua.substring(0, 255) : 'unknown';
 
-    if (activeSessions >= share.maxSessions) {
-      this.logger.warn(`Limite de sessions simultanées atteinte pour l'accès ${share.name}`);
+    if (share.maxSessions > 0) {
+      const activeSessions = await this.prisma.playbackSession.count({
+        where: {
+          shareAccessId: share.id,
+          lastPingAt: { gte: twoMinutesAgo },
+          // Exclure la même IP/chaîne pour ne pas doubler les requêtes HLS d'un même lecteur
+          NOT: {
+            clientIp,
+            channelId,
+          },
+        },
+      });
+
+      if (activeSessions >= share.maxSessions) {
+        this.logger.warn(`Limite de sessions simultanées (${share.maxSessions}) atteinte pour l'accès ${share.name}`);
+        throw new ForbiddenException(`Limite de ${share.maxSessions} connexion(s) simultanée(s) atteinte pour cet accès`);
+      }
     }
 
-    // Upsert session
-    const session = await this.prisma.playbackSession.create({
-      data: {
+    // Chercher une session active existante pour ce client et cette chaîne
+    const existing = await this.prisma.playbackSession.findFirst({
+      where: {
         shareAccessId: share.id,
         channelId,
-        clientIp: ip || 'unknown',
-        userAgent: ua ? ua.substring(0, 255) : 'unknown',
+        clientIp,
+        lastPingAt: { gte: twoMinutesAgo },
       },
     });
 
+    let session;
+    if (existing) {
+      session = await this.prisma.playbackSession.update({
+        where: { id: existing.id },
+        data: { lastPingAt: new Date() },
+      });
+    } else {
+      session = await this.prisma.playbackSession.create({
+        data: {
+          shareAccessId: share.id,
+          channelId,
+          clientIp,
+          userAgent,
+        },
+      });
+    }
+
     return { share, session };
+  }
+
+  async getRealtimeAnalytics() {
+    const twoMinutesAgo = new Date(Date.now() - 2.5 * 60 * 1000);
+
+    const activeSessions = await this.prisma.playbackSession.findMany({
+      where: {
+        lastPingAt: { gte: twoMinutesAgo },
+      },
+      include: {
+        shareAccess: {
+          select: { id: true, name: true, token: true, maxSessions: true },
+        },
+        channel: {
+          select: { id: true, name: true, logoUrl: true, category: true },
+        },
+      },
+      orderBy: { lastPingAt: 'desc' },
+    });
+
+    const totalSessionsAllTime = await this.prisma.playbackSession.count();
+
+    // Calcul du top chaînes
+    const channelCounts: Record<string, { channelId: string; name: string; logoUrl?: string; count: number }> = {};
+    for (const s of activeSessions) {
+      if (!channelCounts[s.channelId]) {
+        channelCounts[s.channelId] = {
+          channelId: s.channelId,
+          name: s.channel?.name || 'Chaîne inconnue',
+          logoUrl: s.channel?.logoUrl || undefined,
+          count: 0,
+        };
+      }
+      channelCounts[s.channelId].count += 1;
+    }
+
+    const topChannels = Object.values(channelCounts).sort((a, b) => b.count - a.count);
+
+    return {
+      activeCount: activeSessions.length,
+      totalSessionsAllTime,
+      estimatedBandwidthMbps: (activeSessions.length * 4.5).toFixed(1), // estimation ~4.5 Mbps / stream HD
+      topChannels,
+      activeSessions: activeSessions.map((s) => ({
+        id: s.id,
+        clientIp: s.clientIp,
+        userAgent: s.userAgent,
+        startedAt: s.startedAt,
+        lastPingAt: s.lastPingAt,
+        channel: s.channel || { id: s.channelId, name: 'Chaîne inconnue', logoUrl: null },
+        share: s.shareAccess || { id: s.shareAccessId, name: 'Partage inconnu', maxSessions: 0 },
+      })),
+    };
+  }
+
+  async terminateSession(sessionId: string) {
+    try {
+      await this.prisma.playbackSession.delete({
+        where: { id: sessionId },
+      });
+      return { success: true, message: 'Session terminée avec succès' };
+    } catch {
+      throw new NotFoundException('Session introuvable ou déjà terminée');
+    }
   }
 
   async getPrimarySource(channelId: string) {

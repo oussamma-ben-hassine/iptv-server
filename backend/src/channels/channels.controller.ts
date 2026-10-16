@@ -7,6 +7,8 @@ import {
   Body,
   Param,
   UseGuards,
+  Query,
+  Headers,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ChannelsService } from './channels.service';
@@ -19,14 +21,88 @@ export class ChannelsController {
 
   @Get('channels')
   @ApiOperation({ summary: 'Lister les chaînes actives (Public / Lecteurs)' })
-  findAllPublic() {
-    return this.channelsService.findAllPublic();
+  findAllPublic(
+    @Query('token') token?: string,
+    @Headers('authorization') authHeader?: string,
+  ) {
+    let activeToken = token;
+    if (!activeToken && authHeader) {
+      const parts = authHeader.split(' ');
+      if (parts.length === 2 && parts[0].toLowerCase() === 'bearer') {
+        activeToken = parts[1];
+      } else {
+        activeToken = authHeader;
+      }
+    }
+    return this.channelsService.findAllPublic(activeToken);
   }
 
   @Get('channels/:id')
   @ApiOperation({ summary: 'Obtenir une chaîne par ID' })
   findOne(@Param('id') id: string) {
     return this.channelsService.findOne(id);
+  }
+
+  @Get('player_api.php')
+  @ApiOperation({ summary: 'Compatibilité Xtream Codes API pour lecteurs IPTV' })
+  async playerApi(
+    @Query('username') username?: string,
+    @Query('password') password?: string,
+    @Query('action') action?: string,
+    @Query('token') queryToken?: string,
+  ) {
+    const token = username || password || queryToken;
+    const channels = await this.channelsService.findAllPublic(token);
+
+    if (action === 'get_live_categories') {
+      const cats = await this.channelsService.getCategories();
+      return cats.map((c, idx) => ({
+        category_id: c.id,
+        category_name: c.name,
+        parent_id: 0,
+      }));
+    }
+
+    if (action === 'get_live_streams') {
+      return channels.map((ch, idx) => ({
+        num: idx + 1,
+        name: ch.name,
+        stream_type: 'live',
+        stream_id: ch.id,
+        stream_icon: ch.logo,
+        epg_channel_id: ch.epgId,
+        added: '1700000000',
+        category_id: ch.categoryId || '1',
+        custom_sid: '',
+        tv_archive: 0,
+        direct_source: ch.streamUrl,
+      }));
+    }
+
+    // Default Xtream auth response
+    return {
+      user_info: {
+        username: token || 'guest',
+        password: '******',
+        message: 'Bienvenue sur IPTV Server',
+        auth: 1,
+        status: 'Active',
+        exp_date: '1893456000',
+        is_trial: '0',
+        active_cons: '0',
+        max_connections: '999',
+        allowed_output_formats: ['m3u8', 'ts'],
+      },
+      server_info: {
+        url: (process.env.APP_URL || 'https://iptv.oussamma.tn').replace(/\/$/, ''),
+        port: '443',
+        https_port: '443',
+        server_protocol: 'https',
+        rtmp_port: '1935',
+        timezone: 'Europe/Paris',
+        time_now: new Date().toISOString(),
+      },
+    };
   }
 
   @Get('categories')
