@@ -1,0 +1,24 @@
+# MediaMTX Configuration pour IPTV Server
+logLevel: info
+logDestinations: [stdout]
+
+# API interne pour contrôle des flux et monitoring
+api: yes
+apiAddress: :9997
+
+# Protocoles activés
+rtsp: yes
+rtspAddress: :8554
+
+rtmp: yes
+rtmpAddress: :1935
+
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: yes
+hlsVariant: fmp4
+hlsSegmentCount: 5
+hlsSegmentDuration: 2s
+
+paths:
+  all_others:

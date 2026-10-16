@@ -1,0 +1,132 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum SourceType {
+  HLS
+  M3U8
+  RTSP
+  RTMP
+  MP4
+}
+
+enum StreamStatus {
+  ONLINE
+  OFFLINE
+  ERROR
+  UNKNOWN
+}
+
+model User {
+  id        String   @id @default(uuid())
+  ssoSub    String   @unique
+  email     String   @unique
+  name      String?
+  avatarUrl String?
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  shares    ShareAccess[]
+}
+
+model Category {
+  id        String    @id @default(uuid())
+  name      String    @unique
+  slug      String    @unique
+  sortOrder Int       @default(0)
+  channels  Channel[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Source {
+  id             String       @id @default(uuid())
+  name           String
+  url            String
+  type           SourceType   @default(HLS)
+  isActive       Boolean      @default(true)
+  priority       Int          @default(1)
+  status         StreamStatus @default(UNKNOWN)
+  lastCheckedAt  DateTime?
+  lastErrorMessage String?
+  channelId      String?
+  channel        Channel?     @relation("ChannelSources", fields: [channelId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Channel {
+  id           String        @id @default(uuid())
+  slug         String        @unique
+  name         String
+  logoUrl      String?
+  country      String?       @default("TN")
+  language     String?       @default("ara")
+  description  String?
+  isActive     Boolean       @default(true)
+  sortOrder    Int           @default(0)
+  epgChannelId String?
+  categoryId   String?
+  category     Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  sources      Source[]      @relation("ChannelSources")
+  shareItems   ShareChannel[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model ShareAccess {
+  id              String         @id @default(uuid())
+  name            String
+  token           String         @unique
+  userId          String?
+  user            User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  isActive        Boolean        @default(true)
+  maxSessions     Int            @default(2)
+  expiresAt       DateTime?
+  allowedChannels ShareChannel[]
+  playbackSessions PlaybackSession[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model ShareChannel {
+  id            String      @id @default(uuid())
+  shareAccessId String
+  channelId     String
+  shareAccess   ShareAccess @relation(fields: [shareAccessId], references: [id], onDelete: Cascade)
+  channel       Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([shareAccessId, channelId])
+}
+
+model PlaybackSession {
+  id            String      @id @default(uuid())
+  shareAccessId String
+  channelId     String
+  clientIp      String?
+  userAgent     String?
+  startedAt     DateTime    @default(now())
+  lastPingAt    DateTime    @default(now())
+  shareAccess   ShareAccess @relation(fields: [shareAccessId], references: [id], onDelete: Cascade)
+
+  @@index([shareAccessId, lastPingAt])
+}
+
+model SystemLog {
+  id        String   @id @default(uuid())
+  level     String   @default("info")
+  category  String
+  message   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+}

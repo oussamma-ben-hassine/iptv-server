@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  # --------------------------------------------------------------------------
+  # 1. BASE DE DONNÉES POSTGRESQL (Privée interne)
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-iptv_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iptv_secure_pass_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-iptv_db}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - iptv-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iptv_user} -d ${POSTGRES_DB:-iptv_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # 2. MOTEUR STREAMING MEDIAMTX
+  # --------------------------------------------------------------------------
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    networks:
+      - iptv-net
+
+  # --------------------------------------------------------------------------
+  # 3. BACKEND NESTJS & PASSERELLE STREAMING TOKEN
+  # --------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      APP_URL: ${APP_URL:-https://iptv.oussamma.tn}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-iptv_user}:${POSTGRES_PASSWORD:-iptv_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-iptv_db}?schema=public
+      SSO_BASE_URL: ${SSO_BASE_URL:-https://sso-a.oussamma.tn}
+      SSO_CLIENT_ID: ${SSO_CLIENT_ID:-client_iptv_server}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-sec_iptv_platform_secret_2026}
+      SSO_REDIRECT_URI: ${SSO_REDIRECT_URI:-https://iptv.oussamma.tn/api/v1/auth/callback}
+      JWT_SECRET: ${JWT_SECRET:-iptv-server-super-secret-production-key-2026}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-oussammabenhassine@gmail.com}
+      MEDIAMTX_API_URL: http://mediamtx:9997
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mediamtx:
+        condition: service_started
+    networks:
+      - iptv-net
+
+  # --------------------------------------------------------------------------
+  # 4. FRONTEND REACT NGINX (Point d'entrée HTTP)
+  # --------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - iptv-net
+    labels:
+      - "coolify.managed=true"
+
+volumes:
+  postgres-data:
+
+networks:
+  iptv-net:
+    driver: bridge

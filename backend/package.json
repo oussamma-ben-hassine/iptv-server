@@ -1,0 +1,53 @@
+{
+  "name": "iptv-server-backend",
+  "version": "1.0.0",
+  "description": "Backend NestJS pour IPTV Server",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
+    "prisma:generate": "prisma generate",
+    "prisma:deploy": "prisma migrate deploy || prisma db push"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.3.9",
+    "@nestjs/core": "^10.3.9",
+    "@nestjs/jwt": "^10.2.0",
+    "@nestjs/passport": "^10.0.3",
+    "@nestjs/platform-express": "^10.3.9",
+    "@nestjs/swagger": "^7.3.1",
+    "@nestjs/axios": "^3.0.2",
+    "@prisma/client": "^5.14.0",
+    "axios": "^1.7.2",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "iptv-playlist-parser": "^0.13.1",
+    "jsonwebtoken": "^9.0.2",
+    "jwks-rsa": "^3.1.0",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "uuid": "^9.0.1",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.3.2",
+    "@nestjs/schematics": "^10.1.1",
+    "@types/cookie-parser": "^1.4.7",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/node": "^20.12.12",
+    "@types/passport-jwt": "^4.0.1",
+    "@types/uuid": "^9.0.8",
+    "@types/xml2js": "^0.4.14",
+    "prisma": "^5.14.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}
