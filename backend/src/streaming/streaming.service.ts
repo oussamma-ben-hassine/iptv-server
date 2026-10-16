@@ -156,12 +156,14 @@ export class StreamingService {
         headers,
       });
 
-      res.setHeader('Content-Type', response.headers['content-type'] || 'video/MP2T');
+      const contentType = response.headers['content-type'];
+      res.setHeader('Content-Type', (Array.isArray(contentType) ? contentType[0] : String(contentType || 'video/MP2T')));
+
       if (response.headers['content-length']) {
-        res.setHeader('Content-Length', response.headers['content-length']);
+        res.setHeader('Content-Length', String(response.headers['content-length']));
       }
       if (response.headers['content-range']) {
-        res.setHeader('Content-Range', response.headers['content-range']);
+        res.setHeader('Content-Range', String(response.headers['content-range']));
       }
 
       response.data.pipe(res);
