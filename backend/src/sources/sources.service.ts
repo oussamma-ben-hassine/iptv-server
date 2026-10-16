@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { SecurityService } from '../common/security.service';
 import axios from 'axios';
-import * as parser from 'iptv-playlist-parser';
 
 @Injectable()
 export class SourcesService {
@@ -112,16 +111,48 @@ export class SourcesService {
   }
 
   parseM3UPreview(m3uContent: string) {
-    const parsed = parser.parse(m3uContent);
-    return parsed.items.map((item, idx) => ({
-      index: idx,
-      name: item.name || `Chaîne ${idx + 1}`,
-      url: item.url,
-      tvgId: item.tvg?.id || null,
-      tvgName: item.tvg?.name || null,
-      tvgLogo: item.tvg?.logo || null,
-      group: item.group?.title || 'Général',
-    }));
+    const lines = m3uContent.split(/\r?\n/);
+    const items: any[] = [];
+    let currentItem: any = null;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      if (line.startsWith('#EXTINF:')) {
+        currentItem = {
+          name: 'Chaîne sans nom',
+          url: '',
+          tvgId: null,
+          tvgName: null,
+          tvgLogo: null,
+          group: 'Général',
+        };
+
+        const tvgIdMatch = line.match(/tvg-id="([^"]*)"/i);
+        if (tvgIdMatch) currentItem.tvgId = tvgIdMatch[1];
+
+        const tvgNameMatch = line.match(/tvg-name="([^"]*)"/i);
+        if (tvgNameMatch) currentItem.tvgName = tvgNameMatch[1];
+
+        const tvgLogoMatch = line.match(/tvg-logo="([^"]*)"/i);
+        if (tvgLogoMatch) currentItem.tvgLogo = tvgLogoMatch[1];
+
+        const groupMatch = line.match(/group-title="([^"]*)"/i);
+        if (groupMatch) currentItem.group = groupMatch[1];
+
+        const commaIndex = line.lastIndexOf(',');
+        if (commaIndex !== -1) {
+          currentItem.name = line.substring(commaIndex + 1).trim() || currentItem.name;
+        }
+      } else if (!line.startsWith('#') && currentItem) {
+        currentItem.url = line;
+        items.push({ ...currentItem, index: items.length });
+        currentItem = null;
+      }
+    }
+
+    return items;
   }
 
   async importM3UItems(selectedItems: Array<{

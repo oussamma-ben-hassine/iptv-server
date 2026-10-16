@@ -26,7 +26,6 @@
     "cookie-parser": "^1.4.6",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "iptv-playlist-parser": "^0.13.1",
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.1.0",
     "passport": "^0.7.0",
