@@ -55,6 +55,8 @@ services:
       LITELLM_BASE_URL: ${LITELLM_BASE_URL:-https://ai.oussamma.tn/v1}
       LITELLM_API_KEY: ${LITELLM_API_KEY:-sk-oussamma-master-gateway-2026}
       LITELLM_MODEL: ${LITELLM_MODEL:-gpt-4o-mini}
+    volumes:
+      - vod-storage:/data/vod
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,6 +89,8 @@ services:
 
 volumes:
   postgres-data:
+  vod-storage:
+
 
 networks:
   iptv-net:

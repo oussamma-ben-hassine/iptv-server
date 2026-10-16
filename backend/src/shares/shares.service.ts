@@ -211,7 +211,10 @@ export class SharesService {
         m3u += '\n### SECTION FILMS & VOD ###\n\n';
         for (const m of movies) {
           const group = `Films | ${m.genre || 'Cinéma'}`;
-          let moviePlayUrl = m.streamUrl;
+          let moviePlayUrl = m.streamUrl.startsWith('http')
+            ? m.streamUrl
+            : `${this.baseUrl}${m.streamUrl.startsWith('/') ? '' : '/'}${m.streamUrl}`;
+
           if (moviePlayUrl.includes('?') && !moviePlayUrl.includes('token=')) {
             moviePlayUrl += `&token=${share.token}`;
           } else if (!moviePlayUrl.includes('?')) {

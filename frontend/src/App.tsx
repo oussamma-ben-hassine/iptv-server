@@ -101,6 +101,13 @@ export default function App() {
   const [aiChannelInput, setAiChannelInput] = useState('');
   const [aiChannelLoading, setAiChannelLoading] = useState(false);
 
+  // Video File Upload States
+  const [showUploadMovieModal, setShowUploadMovieModal] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadedFileDetails, setUploadedFileDetails] = useState<any>(null);
+  const videoFileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Modals & form state
   const [showAddSourceModal, setShowAddSourceModal] = useState(false);
   const [newSource, setNewSource] = useState({ name: '', url: '', type: 'HLS', channelId: '', priority: 1 });
@@ -216,6 +223,77 @@ export default function App() {
       loadData();
     } catch (e: any) {
       alert(`Erreur: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  // --- Video File Upload Handler ---
+  const handleVideoFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    try {
+      const uploadRes = await axios.post('/api/v1/admin/movies/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(percentCompleted);
+          }
+        },
+      });
+
+      if (uploadRes.data?.streamUrl) {
+        setUploadedFileDetails(uploadRes.data);
+
+        // Nettoyer le nom du fichier pour interroger l'IA LiteLLM (ex: Inception.2010.1080p.mkv -> Inception)
+        const cleanName = file.name
+          .replace(/\.(mp4|mkv|avi|mov|ts|m3u8)$/i, '')
+          .replace(/[\._\-]/g, ' ')
+          .replace(/\b(1080p|720p|4k|2160p|bluray|web-dl|x264|x265|hevc|dvdrip|french|vostfr|multi)\b/gi, '')
+          .trim();
+
+        // Tenter d'enrichir automatiquement la fiche via LiteLLM
+        try {
+          const aiRes = await axios.post('/api/v1/ai/parse-movie', { input: cleanName || file.name });
+          if (aiRes.data) {
+            setNewMovie({
+              title: aiRes.data.title || cleanName,
+              streamUrl: uploadRes.data.streamUrl,
+              posterUrl: aiRes.data.posterUrl || '',
+              year: aiRes.data.year || new Date().getFullYear(),
+              rating: aiRes.data.rating || 7.5,
+              genre: aiRes.data.genre || 'Action',
+              durationMin: aiRes.data.durationMin || 110,
+              plot: aiRes.data.plot || '',
+              director: aiRes.data.director || '',
+              container: uploadRes.data.container || 'mp4',
+            });
+          }
+        } catch {
+          // Si l'IA échoue, renseigner le nom brut
+          setNewMovie((prev) => ({
+            ...prev,
+            title: cleanName || file.name,
+            streamUrl: uploadRes.data.streamUrl,
+            container: uploadRes.data.container || 'mp4',
+          }));
+        }
+
+        setShowUploadMovieModal(false);
+        setShowAddMovieModal(true);
+      }
+    } catch (err: any) {
+      alert(`Erreur d'upload: ${err.response?.data?.message || err.message}`);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(null);
+      if (videoFileInputRef.current) videoFileInputRef.current.value = '';
     }
   };
 
@@ -1347,6 +1425,13 @@ export default function App() {
                     title="Ajouter un film par nom ou par URL grâce à l'IA LiteLLM"
                   >
                     <Sparkles className="w-4 h-4 text-amber-300" /> Ajouter par IA (Nom ou URL)
+                  </button>
+                  <button
+                    onClick={() => setShowUploadMovieModal(true)}
+                    className="py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-blue-500/20"
+                    title="Téléverser directement un fichier vidéo MP4 ou MKV"
+                  >
+                    <UploadCloud className="w-4 h-4" /> Uploader un fichier vidéo
                   </button>
                   {movies.length > 0 && (
                     <button
@@ -2671,6 +2756,117 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Upload de fichier vidéo VOD */}
+      {showUploadMovieModal && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-blue-500/30 rounded-2xl p-6 max-w-lg w-full shadow-2xl relative overflow-hidden">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  <UploadCloud className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-base">Téléverser un fichier VOD / Film</h3>
+                  <p className="text-[11px] text-blue-300 font-medium">Stockage persistant & Streaming HTTP Range</p>
+                </div>
+              </div>
+              <button
+                disabled={isUploading}
+                onClick={() => setShowUploadMovieModal(false)}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <input
+              type="file"
+              ref={videoFileInputRef}
+              accept="video/*,.mp4,.mkv,.avi,.mov"
+              onChange={handleVideoFileUpload}
+              className="hidden"
+            />
+
+            {isUploading ? (
+              <div className="py-8 px-4 text-center space-y-4">
+                <div className="relative w-16 h-16 mx-auto">
+                  <div className="absolute inset-0 rounded-full border-4 border-blue-500/20 border-t-blue-500 animate-spin" />
+                  <UploadCloud className="w-8 h-8 text-blue-400 absolute inset-0 m-auto animate-pulse" />
+                </div>
+
+                <div>
+                  <h4 className="text-white font-semibold text-sm">Téléversement du fichier en cours...</h4>
+                  <p className="text-slate-400 text-xs mt-1">Veuillez ne pas fermer cette fenêtre</p>
+                </div>
+
+                <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden border border-slate-700">
+                  <div
+                    className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full transition-all duration-300 rounded-full"
+                    style={{ width: `${uploadProgress ?? 0}%` }}
+                  />
+                </div>
+
+                <div className="flex justify-between items-center text-xs text-slate-400 font-mono">
+                  <span>Progression</span>
+                  <span className="font-bold text-blue-400">{uploadProgress ?? 0}%</span>
+                </div>
+
+                <p className="text-[11px] text-slate-400 italic">
+                  💡 Dès la fin du téléversement, LiteLLM tentera de préremplir l'affiche et les infos du film.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div
+                  onClick={() => videoFileInputRef.current?.click()}
+                  className="border-2 border-dashed border-slate-700 hover:border-blue-500/50 bg-slate-950/50 hover:bg-slate-900/60 rounded-xl p-8 text-center cursor-pointer transition-all group"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-blue-500/10 group-hover:bg-blue-500/20 text-blue-400 flex items-center justify-center mx-auto mb-3 transition-all">
+                    <UploadCloud className="w-7 h-7" />
+                  </div>
+                  <h4 className="text-white font-semibold text-sm group-hover:text-blue-300 transition-colors">
+                    Cliquez pour choisir une vidéo
+                  </h4>
+                  <p className="text-slate-400 text-xs mt-1">
+                    Formats supportés : <span className="text-slate-300 font-medium">MP4, MKV, AVI, MOV</span>
+                  </p>
+                  <p className="text-slate-500 text-[11px] mt-2">
+                    Jusqu'à 10 Go par fichier
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300 space-y-1">
+                  <p className="font-semibold flex items-center gap-1.5 text-purple-200">
+                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    Auto-complétion intelligente par IA :
+                  </p>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Le nom de fichier sera nettoyé et analysé par l'IA LiteLLM (ai.oussamma.tn) pour trouver automatiquement le titre, l'affiche officielle, l'année, la durée et le synopsis !
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowUploadMovieModal(false)}
+                    className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs"
+                  >
+                    Fermer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => videoFileInputRef.current?.click()}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-blue-500/20"
+                  >
+                    <UploadCloud className="w-4 h-4" /> Parcourir les fichiers
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

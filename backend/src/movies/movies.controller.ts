@@ -9,7 +9,12 @@ import {
   UseGuards,
   Query,
   Headers,
+  Res,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { MoviesService } from './movies.service';
 import { AuthGuard, Roles } from '../auth/auth.guard';
@@ -82,5 +87,59 @@ export class MoviesController {
   @ApiOperation({ summary: 'Supprimer plusieurs films en une seule action' })
   bulkDelete(@Body('ids') ids: string[]) {
     return this.moviesService.deleteMany(ids);
+  }
+
+  @Get('movies/stream/:fileName')
+  @ApiOperation({ summary: 'Passerelle streaming fichier VOD avec support Range' })
+  async streamMovie(
+    @Param('fileName') fileName: string,
+    @Headers('range') range: string,
+    @Res() res: any,
+  ) {
+    return this.moviesService.streamLocalFile(fileName, range, res);
+  }
+
+  @Post('admin/movies/upload')
+  @UseGuards(AuthGuard)
+  @Roles('ADMIN')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          const fs = require('fs');
+          const dir = '/data/vod';
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+          cb(null, dir);
+        },
+        filename: (_req, file, cb) => {
+          const path = require('path');
+          const ext = path.extname(file.originalname).toLowerCase();
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          cb(null, `${uniqueSuffix}${ext}`);
+        },
+      }),
+      limits: {
+        fileSize: 10 * 1024 * 1024 * 1024, // 10 GB
+      },
+    }),
+  )
+  @ApiOperation({ summary: 'Uploader un fichier vidéo VOD local (.mp4, .mkv, etc.)' })
+  uploadVideoFile(@UploadedFile() file: any) {
+    if (!file) {
+      return { error: 'Aucun fichier reçu' };
+    }
+    const path = require('path');
+    const ext = path.extname(file.originalname).replace('.', '').toLowerCase();
+    const streamUrl = `/api/v1/movies/stream/${file.filename}`;
+    return {
+      success: true,
+      filename: file.filename,
+      originalName: file.originalname,
+      size: file.size,
+      container: ext || 'mp4',
+      streamUrl,
+    };
   }
 }

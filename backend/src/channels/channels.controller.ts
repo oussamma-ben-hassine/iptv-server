@@ -96,22 +96,29 @@ export class ChannelsController {
         orderBy: { sortOrder: 'asc' },
       });
 
-      return movies.map((m, idx) => ({
-        num: idx + 1,
-        name: m.title,
-        title: m.title,
-        year: String(m.year || 2024),
-        stream_type: 'movie',
-        stream_id: m.id,
-        stream_icon: m.posterUrl || '',
-        rating: String(m.rating || '7.5'),
-        rating_5based: 4,
-        added: '1700000000',
-        category_id: '1',
-        container_extension: m.container || 'mp4',
-        custom_sid: '',
-        direct_source: m.streamUrl,
-      }));
+      const baseUrl = (process.env.APP_URL || 'https://iptv.oussamma.tn').replace(/\/$/, '');
+      return movies.map((m, idx) => {
+        const directSource = m.streamUrl.startsWith('http')
+          ? m.streamUrl
+          : `${baseUrl}${m.streamUrl.startsWith('/') ? '' : '/'}${m.streamUrl}`;
+
+        return {
+          num: idx + 1,
+          name: m.title,
+          title: m.title,
+          year: String(m.year || 2024),
+          stream_type: 'movie',
+          stream_id: m.id,
+          stream_icon: m.posterUrl || '',
+          rating: String(m.rating || '7.5'),
+          rating_5based: 4,
+          added: '1700000000',
+          category_id: '1',
+          container_extension: m.container || 'mp4',
+          custom_sid: '',
+          direct_source: directSource,
+        };
+      });
     }
 
     // Default Xtream auth response

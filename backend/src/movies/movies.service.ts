@@ -104,14 +104,80 @@ export class MoviesService {
   }
 
   async delete(id: string) {
-    await this.findOne(id);
+    const movie = await this.findOne(id);
+    // Supprimer le fichier local s'il existe
+    if (movie.streamUrl.startsWith('/api/v1/movies/stream/')) {
+      const fileName = movie.streamUrl.replace('/api/v1/movies/stream/', '');
+      const filePath = `/data/vod/${fileName}`;
+      try {
+        const fs = await import('fs');
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch {}
+    }
     return this.prisma.movie.delete({ where: { id } });
   }
 
   async deleteMany(ids: string[]) {
+    const movies = await this.prisma.movie.findMany({ where: { id: { in: ids } } });
+    for (const m of movies) {
+      if (m.streamUrl.startsWith('/api/v1/movies/stream/')) {
+        const fileName = m.streamUrl.replace('/api/v1/movies/stream/', '');
+        const filePath = `/data/vod/${fileName}`;
+        try {
+          const fs = await import('fs');
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+          }
+        } catch {}
+      }
+    }
     const res = await this.prisma.movie.deleteMany({
       where: { id: { in: ids } },
     });
     return { success: true, deletedCount: res.count };
+  }
+
+  /**
+   * Streaming HTTP avec support Range Requests pour lecture fluide dans tout lecteur IPTV
+   */
+  async streamLocalFile(fileName: string, reqRange: string | undefined, res: any) {
+    const fs = await import('fs');
+    const path = await import('path');
+    const filePath = path.join('/data/vod', path.basename(fileName));
+
+    if (!fs.existsSync(filePath)) {
+      throw new NotFoundException('Fichier vidéo VOD introuvable sur le serveur');
+    }
+
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = ext === '.mkv' ? 'video/x-matroska' : ext === '.mp4' ? 'video/mp4' : 'application/octet-stream';
+
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    if (reqRange) {
+      const parts = reqRange.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = end - start + 1;
+      const fileStream = fs.createReadStream(filePath, { start, end });
+
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Content-Length': chunksize,
+        'Content-Type': contentType,
+      });
+      fileStream.pipe(res);
+    } else {
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': contentType,
+      });
+      fs.createReadStream(filePath).pipe(res);
+    }
   }
 }
