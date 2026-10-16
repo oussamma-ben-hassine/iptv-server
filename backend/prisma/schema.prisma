@@ -103,6 +103,7 @@ model ShareChannel {
   id            String      @id @default(uuid())
   shareAccessId String
   channelId     String
+  sortOrder     Int         @default(0)
   shareAccess   ShareAccess @relation(fields: [shareAccessId], references: [id], onDelete: Cascade)
   channel       Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
 

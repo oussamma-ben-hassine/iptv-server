@@ -18,6 +18,7 @@ export class SharesService {
     return this.prisma.shareAccess.findMany({
       include: {
         allowedChannels: {
+          orderBy: { sortOrder: 'asc' },
           include: { channel: true },
         },
         user: true,
@@ -34,6 +35,7 @@ export class SharesService {
       where: { id },
       include: {
         allowedChannels: {
+          orderBy: { sortOrder: 'asc' },
           include: { channel: true },
         },
         user: true,
@@ -63,9 +65,10 @@ export class SharesService {
 
     if (data.channelIds && data.channelIds.length > 0) {
       await this.prisma.shareChannel.createMany({
-        data: data.channelIds.map((cid) => ({
+        data: data.channelIds.map((cid, index) => ({
           shareAccessId: share.id,
           channelId: cid,
+          sortOrder: index,
         })),
         skipDuplicates: true,
       });
@@ -74,12 +77,14 @@ export class SharesService {
       const allActiveChannels = await this.prisma.channel.findMany({
         where: { isActive: true },
         select: { id: true },
+        orderBy: { sortOrder: 'asc' },
       });
       if (allActiveChannels.length > 0) {
         await this.prisma.shareChannel.createMany({
-          data: allActiveChannels.map((c) => ({
+          data: allActiveChannels.map((c, index) => ({
             shareAccessId: share.id,
             channelId: c.id,
+            sortOrder: index,
           })),
           skipDuplicates: true,
         });
@@ -115,9 +120,10 @@ export class SharesService {
       });
       if (data.channelIds.length > 0) {
         await this.prisma.shareChannel.createMany({
-          data: data.channelIds.map((cid) => ({
+          data: data.channelIds.map((cid, index) => ({
             shareAccessId: id,
             channelId: cid,
+            sortOrder: index,
           })),
           skipDuplicates: true,
         });
@@ -145,6 +151,7 @@ export class SharesService {
       },
       include: {
         allowedChannels: {
+          orderBy: { sortOrder: 'asc' },
           include: {
             channel: {
               include: {

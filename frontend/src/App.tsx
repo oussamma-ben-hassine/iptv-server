@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Tv,
   Radio,
@@ -22,6 +22,11 @@ import {
   Edit,
   CheckSquare,
   Square,
+  Search,
+  Filter,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpToLine,
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -46,6 +51,10 @@ export default function App() {
   // Multi-selection states
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
+
+  // Search & Filter inside Share Creation/Edition
+  const [shareSearch, setShareSearch] = useState('');
+  const [shareCategoryFilter, setShareCategoryFilter] = useState('');
 
   // Modals & form state
   const [showAddSourceModal, setShowAddSourceModal] = useState(false);
@@ -113,6 +122,24 @@ export default function App() {
       console.error(e);
     }
   };
+
+  const channelMap = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const c of channels) map.set(c.id, c);
+    return map;
+  }, [channels]);
+
+  const filteredShareChannels = useMemo(() => {
+    return channels.filter((ch) => {
+      const matchesSearch =
+        !shareSearch.trim() ||
+        ch.name.toLowerCase().includes(shareSearch.toLowerCase()) ||
+        (ch.category?.name && ch.category.name.toLowerCase().includes(shareSearch.toLowerCase()));
+      const matchesCategory =
+        !shareCategoryFilter || ch.categoryId === shareCategoryFilter || ch.category?.name === shareCategoryFilter;
+      return matchesSearch && matchesCategory;
+    });
+  }, [channels, shareSearch, shareCategoryFilter]);
 
   const handleLogin = () => {
     window.location.href = '/api/v1/auth/login';
@@ -273,13 +300,96 @@ export default function App() {
     }
   };
 
-  // --- Shares Handlers ---
+  // --- Shares Handlers & Reordering ---
+  const toggleShareChannel = (channelId: string, isEditing: boolean) => {
+    if (isEditing) {
+      if (!editingShare) return;
+      const exists = editingShare.channelIds.includes(channelId);
+      const next = exists
+        ? editingShare.channelIds.filter((id) => id !== channelId)
+        : [...editingShare.channelIds, channelId];
+      setEditingShare({ ...editingShare, channelIds: next });
+    } else {
+      const exists = newShare.channelIds.includes(channelId);
+      const next = exists
+        ? newShare.channelIds.filter((id) => id !== channelId)
+        : [...newShare.channelIds, channelId];
+      setNewShare({ ...newShare, channelIds: next });
+    }
+  };
+
+  const selectFilteredChannels = (isEditing: boolean) => {
+    const idsToAdd = filteredShareChannels.map((c) => c.id);
+    if (isEditing) {
+      if (!editingShare) return;
+      const combined = Array.from(new Set([...editingShare.channelIds, ...idsToAdd]));
+      setEditingShare({ ...editingShare, channelIds: combined });
+    } else {
+      const combined = Array.from(new Set([...newShare.channelIds, ...idsToAdd]));
+      setNewShare({ ...newShare, channelIds: combined });
+    }
+  };
+
+  const moveChannelUp = (index: number, isEditing: boolean) => {
+    if (index <= 0) return;
+    if (isEditing) {
+      if (!editingShare) return;
+      const ids = [...editingShare.channelIds];
+      const temp = ids[index - 1];
+      ids[index - 1] = ids[index];
+      ids[index] = temp;
+      setEditingShare({ ...editingShare, channelIds: ids });
+    } else {
+      const ids = [...newShare.channelIds];
+      const temp = ids[index - 1];
+      ids[index - 1] = ids[index];
+      ids[index] = temp;
+      setNewShare({ ...newShare, channelIds: ids });
+    }
+  };
+
+  const moveChannelDown = (index: number, isEditing: boolean) => {
+    if (isEditing) {
+      if (!editingShare || index >= editingShare.channelIds.length - 1) return;
+      const ids = [...editingShare.channelIds];
+      const temp = ids[index + 1];
+      ids[index + 1] = ids[index];
+      ids[index] = temp;
+      setEditingShare({ ...editingShare, channelIds: ids });
+    } else {
+      if (index >= newShare.channelIds.length - 1) return;
+      const ids = [...newShare.channelIds];
+      const temp = ids[index + 1];
+      ids[index + 1] = ids[index];
+      ids[index] = temp;
+      setNewShare({ ...newShare, channelIds: ids });
+    }
+  };
+
+  const moveChannelToTop = (index: number, isEditing: boolean) => {
+    if (index <= 0) return;
+    if (isEditing) {
+      if (!editingShare) return;
+      const ids = [...editingShare.channelIds];
+      const [item] = ids.splice(index, 1);
+      ids.unshift(item);
+      setEditingShare({ ...editingShare, channelIds: ids });
+    } else {
+      const ids = [...newShare.channelIds];
+      const [item] = ids.splice(index, 1);
+      ids.unshift(item);
+      setNewShare({ ...newShare, channelIds: ids });
+    }
+  };
+
   const handleCreateShare = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       await axios.post('/api/v1/admin/shares', newShare);
       setShowAddShareModal(false);
       setNewShare({ name: '', maxSessions: 2, channelIds: [] });
+      setShareSearch('');
+      setShareCategoryFilter('');
       loadData();
     } catch (e: any) {
       alert(`Erreur: ${e.response?.data?.message || e.message}`);
@@ -295,6 +405,8 @@ export default function App() {
       isActive: sh.isActive ?? true,
       channelIds: existingIds,
     });
+    setShareSearch('');
+    setShareCategoryFilter('');
     setShowEditShareModal(true);
   };
 
@@ -310,6 +422,8 @@ export default function App() {
       });
       setShowEditShareModal(false);
       setEditingShare(null);
+      setShareSearch('');
+      setShareCategoryFilter('');
       loadData();
     } catch (e: any) {
       alert(`Erreur: ${e.response?.data?.message || e.message}`);
@@ -866,7 +980,11 @@ export default function App() {
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <button
-                onClick={() => setShowAddShareModal(true)}
+                onClick={() => {
+                  setShareSearch('');
+                  setShareCategoryFilter('');
+                  setShowAddShareModal(true);
+                }}
                 className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/10"
               >
                 <Plus className="w-4 h-4" /> Créer un accès de partage M3U
@@ -1127,90 +1245,231 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal: Créer Partage */}
+      {/* Modal: Créer Partage M3U (Avec Recherche, Filtre Catégorie et Réordonnancement) */}
       {showAddShareModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl max-h-[90vh] flex flex-col">
-            <h3 className="font-bold text-white text-lg mb-4">Créer un Accès de Partage M3U</h3>
-            <form onSubmit={handleCreateShare} className="space-y-4 text-xs sm:text-sm flex-1 overflow-y-auto pr-1">
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-4xl w-full shadow-2xl max-h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
               <div>
-                <label className="block text-slate-400 mb-1">Nom de l'accès (Ex: Salon TV, Chambre IPTV)</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Mon Salon TV"
-                  value={newShare.name}
-                  onChange={(e) => setNewShare({ ...newShare, name: e.target.value })}
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
-                />
+                <h3 className="font-bold text-white text-lg">Créer un Accès de Partage M3U</h3>
+                <p className="text-xs text-slate-400">Recherchez, filtrez par catégorie et organisez l'ordre précis des chaînes dans le flux M3U.</p>
               </div>
-              <div>
-                <label className="block text-slate-400 mb-1">Nombre maximal d'écrans simultanés</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={newShare.maxSessions}
-                  onChange={(e) => setNewShare({ ...newShare, maxSessions: parseInt(e.target.value) || 2 })}
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
-                />
+              <button onClick={() => setShowAddShareModal(false)} className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateShare} className="flex-1 flex flex-col min-h-0 space-y-4">
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-slate-400 text-xs mb-1">Nom de l'accès</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Mon Salon TV"
+                    value={newShare.name}
+                    onChange={(e) => setNewShare({ ...newShare, name: e.target.value })}
+                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 text-xs mb-1">Nombre maximal d'écrans simultanés</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={newShare.maxSessions}
+                    onChange={(e) => setNewShare({ ...newShare, maxSessions: parseInt(e.target.value) || 2 })}
+                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
               </div>
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-slate-400">
-                    Attribuer des chaînes ({newShare.channelIds.length}/{channels.length})
-                  </label>
-                  <div className="flex gap-2 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setNewShare({ ...newShare, channelIds: channels.map((c) => c.id) })}
-                      className="text-emerald-400 hover:underline"
-                    >
-                      Tout sélectionner
-                    </button>
-                    <span className="text-slate-600">|</span>
-                    <button
-                      type="button"
-                      onClick={() => setNewShare({ ...newShare, channelIds: [] })}
-                      className="text-slate-400 hover:underline"
-                    >
-                      Désélectionner
-                    </button>
+
+              {/* Visual Dual-Column Channel Builder */}
+              <div className="grid md:grid-cols-2 gap-4 flex-1 min-h-0 pt-1">
+                {/* Left: Catalogue with Search & Category Filter */}
+                <div className="flex flex-col border border-slate-800 rounded-xl bg-slate-950 p-3 space-y-3 min-h-[300px]">
+                  <div className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                    <span>1. Catalogue des Chaînes</span>
+                    <span className="text-slate-500">{filteredShareChannels.length} trouvée(s)</span>
+                  </div>
+
+                  {/* Search and Category Filter */}
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
+                      <input
+                        type="text"
+                        placeholder="Rechercher par nom..."
+                        value={shareSearch}
+                        onChange={(e) => setShareSearch(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <select
+                        value={shareCategoryFilter}
+                        onChange={(e) => setShareCategoryFilter(e.target.value)}
+                        className="flex-1 p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-emerald-500"
+                      >
+                        <option value="">Toutes les catégories</option>
+                        {categories.map((cat) => (
+                          <option key={cat.id} value={cat.id}>
+                            {cat.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => selectFilteredChannels(false)}
+                        className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold shrink-0"
+                        title="Ajouter toutes les chaînes visibles"
+                      >
+                        + Tout ajouter
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Scrollable list */}
+                  <div className="flex-1 overflow-y-auto space-y-1 pr-1 max-h-56 md:max-h-72">
+                    {filteredShareChannels.map((ch) => {
+                      const isChecked = newShare.channelIds.includes(ch.id);
+                      return (
+                        <div
+                          key={ch.id}
+                          onClick={() => toggleShareChannel(ch.id, false)}
+                          className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-xs ${
+                            isChecked
+                              ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-200'
+                              : 'hover:bg-slate-900 border border-transparent text-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {}}
+                              className="rounded border-slate-700 text-emerald-500 pointer-events-none"
+                            />
+                            {ch.logoUrl && (
+                              <img src={ch.logoUrl} alt="" className="w-5 h-5 rounded object-contain bg-slate-900 shrink-0" />
+                            )}
+                            <span className="font-medium truncate">{ch.name}</span>
+                          </div>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 shrink-0 ml-2">
+                            {ch.category?.name || 'Général'}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-                <div className="max-h-48 overflow-y-auto p-2 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
-                  {channels.map((ch) => (
-                    <label key={ch.id} className="flex items-center gap-2 text-xs text-slate-300 hover:bg-slate-900 p-1.5 rounded cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={newShare.channelIds.includes(ch.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setNewShare({ ...newShare, channelIds: [...newShare.channelIds, ch.id] });
-                          } else {
-                            setNewShare({ ...newShare, channelIds: newShare.channelIds.filter((id) => id !== ch.id) });
-                          }
-                        }}
-                        className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
-                      />
-                      <span className="truncate">{ch.name}</span>
-                    </label>
-                  ))}
+
+                {/* Right: Selected Channels & Order */}
+                <div className="flex flex-col border border-slate-800 rounded-xl bg-slate-950 p-3 space-y-3 min-h-[300px]">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-300">
+                      2. Ordre dans la Playlist M3U ({newShare.channelIds.length})
+                    </span>
+                    {newShare.channelIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setNewShare({ ...newShare, channelIds: [] })}
+                        className="text-red-400 hover:underline text-[11px]"
+                      >
+                        Tout retirer
+                      </button>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 italic">
+                    Les chaînes seront générées dans ce classement exact. Utilisez ▲ ▼ pour réordonner.
+                  </p>
+
+                  <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-56 md:max-h-72">
+                    {newShare.channelIds.length === 0 ? (
+                      <div className="p-8 text-center text-slate-600 text-xs">
+                        Aucune chaîne sélectionnée.<br />
+                        <span className="text-slate-500 text-[11px]">Si aucune chaîne n'est choisie, toutes les chaînes actives seront incluses par défaut.</span>
+                      </div>
+                    ) : (
+                      newShare.channelIds.map((id, index) => {
+                        const ch = channelMap.get(id);
+                        if (!ch) return null;
+                        return (
+                          <div
+                            key={id}
+                            className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-200"
+                          >
+                            <div className="flex items-center gap-2 truncate mr-2">
+                              <span className="w-5 h-5 rounded-full bg-slate-800 text-[10px] font-bold text-emerald-400 flex items-center justify-center shrink-0">
+                                {index + 1}
+                              </span>
+                              {ch.logoUrl && (
+                                <img src={ch.logoUrl} alt="" className="w-5 h-5 rounded object-contain bg-slate-950 shrink-0" />
+                              )}
+                              <span className="font-medium truncate">{ch.name}</span>
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                disabled={index === 0}
+                                onClick={(e) => { e.stopPropagation(); moveChannelToTop(index, false); }}
+                                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-emerald-400 disabled:opacity-30 disabled:pointer-events-none"
+                                title="Mettre en 1ère position"
+                              >
+                                <ArrowUpToLine className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={index === 0}
+                                onClick={(e) => { e.stopPropagation(); moveChannelUp(index, false); }}
+                                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-emerald-400 disabled:opacity-30 disabled:pointer-events-none"
+                                title="Monter"
+                              >
+                                <ArrowUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={index === newShare.channelIds.length - 1}
+                                onClick={(e) => { e.stopPropagation(); moveChannelDown(index, false); }}
+                                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-emerald-400 disabled:opacity-30 disabled:pointer-events-none"
+                                title="Descendre"
+                              >
+                                <ArrowDown className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); toggleShareChannel(id, false); }}
+                                className="p-1 rounded hover:bg-red-500/20 text-slate-500 hover:text-red-400 ml-1"
+                                title="Retirer"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               </div>
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
                 <button
                   type="button"
                   onClick={() => setShowAddShareModal(false)}
-                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white"
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs"
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-slate-950"
+                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-slate-950 text-xs shadow-lg shadow-emerald-500/10"
                 >
-                  Générer le Partage
+                  Générer le Partage ({newShare.channelIds.length} chaînes)
                 </button>
               </div>
             </form>
@@ -1218,103 +1477,250 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal: Modifier Partage */}
+      {/* Modal: Modifier Partage M3U (Avec Recherche, Filtre Catégorie et Réordonnancement) */}
       {showEditShareModal && editingShare && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl max-h-[90vh] flex flex-col">
-            <h3 className="font-bold text-white text-lg mb-4">Modifier l'Accès de Partage M3U</h3>
-            <form onSubmit={handleUpdateShare} className="space-y-4 text-xs sm:text-sm flex-1 overflow-y-auto pr-1">
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-4xl w-full shadow-2xl max-h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
               <div>
-                <label className="block text-slate-400 mb-1">Nom de l'accès</label>
-                <input
-                  type="text"
-                  required
-                  value={editingShare.name}
-                  onChange={(e) => setEditingShare({ ...editingShare, name: e.target.value })}
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
-                />
+                <h3 className="font-bold text-white text-lg">Modifier l'Accès de Partage M3U</h3>
+                <p className="text-xs text-slate-400">Réorganisez l'ordre des chaînes ou modifiez les accès accordés.</p>
               </div>
-              <div>
-                <label className="block text-slate-400 mb-1">Nombre maximal d'écrans simultanés</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={editingShare.maxSessions}
-                  onChange={(e) => setEditingShare({ ...editingShare, maxSessions: parseInt(e.target.value) || 2 })}
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-              <div>
-                <label className="flex items-center gap-2 cursor-pointer text-slate-300">
+              <button
+                onClick={() => {
+                  setShowEditShareModal(false);
+                  setEditingShare(null);
+                }}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateShare} className="flex-1 flex flex-col min-h-0 space-y-4">
+              <div className="grid sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-slate-400 text-xs mb-1">Nom de l'accès</label>
                   <input
-                    type="checkbox"
-                    checked={editingShare.isActive}
-                    onChange={(e) => setEditingShare({ ...editingShare, isActive: e.target.checked })}
-                    className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
+                    type="text"
+                    required
+                    value={editingShare.name}
+                    onChange={(e) => setEditingShare({ ...editingShare, name: e.target.value })}
+                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
                   />
-                  <span>Accès actif (décocher pour suspendre)</span>
-                </label>
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-slate-400">
-                    Attribuer des chaînes ({editingShare.channelIds.length}/{channels.length})
+                </div>
+                <div>
+                  <label className="block text-slate-400 text-xs mb-1">Nombre maximal d'écrans simultanés</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={editingShare.maxSessions}
+                    onChange={(e) => setEditingShare({ ...editingShare, maxSessions: parseInt(e.target.value) || 2 })}
+                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div className="flex items-center pt-5">
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-300 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={editingShare.isActive}
+                      onChange={(e) => setEditingShare({ ...editingShare, isActive: e.target.checked })}
+                      className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
+                    />
+                    <span>Accès actif (décocher pour suspendre)</span>
                   </label>
-                  <div className="flex gap-2 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setEditingShare({ ...editingShare, channelIds: channels.map((c) => c.id) })}
-                      className="text-emerald-400 hover:underline"
-                    >
-                      Tout sélectionner
-                    </button>
-                    <span className="text-slate-600">|</span>
-                    <button
-                      type="button"
-                      onClick={() => setEditingShare({ ...editingShare, channelIds: [] })}
-                      className="text-slate-400 hover:underline"
-                    >
-                      Désélectionner
-                    </button>
+                </div>
+              </div>
+
+              {/* Visual Dual-Column Channel Builder */}
+              <div className="grid md:grid-cols-2 gap-4 flex-1 min-h-0 pt-1">
+                {/* Left: Catalogue with Search & Category Filter */}
+                <div className="flex flex-col border border-slate-800 rounded-xl bg-slate-950 p-3 space-y-3 min-h-[300px]">
+                  <div className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                    <span>1. Catalogue des Chaînes</span>
+                    <span className="text-slate-500">{filteredShareChannels.length} trouvée(s)</span>
+                  </div>
+
+                  {/* Search and Category Filter */}
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
+                      <input
+                        type="text"
+                        placeholder="Rechercher par nom..."
+                        value={shareSearch}
+                        onChange={(e) => setShareSearch(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <select
+                        value={shareCategoryFilter}
+                        onChange={(e) => setShareCategoryFilter(e.target.value)}
+                        className="flex-1 p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-emerald-500"
+                      >
+                        <option value="">Toutes les catégories</option>
+                        {categories.map((cat) => (
+                          <option key={cat.id} value={cat.id}>
+                            {cat.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => selectFilteredChannels(true)}
+                        className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold shrink-0"
+                        title="Ajouter toutes les chaînes visibles"
+                      >
+                        + Tout ajouter
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Scrollable list */}
+                  <div className="flex-1 overflow-y-auto space-y-1 pr-1 max-h-56 md:max-h-72">
+                    {filteredShareChannels.map((ch) => {
+                      const isChecked = editingShare.channelIds.includes(ch.id);
+                      return (
+                        <div
+                          key={ch.id}
+                          onClick={() => toggleShareChannel(ch.id, true)}
+                          className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-xs ${
+                            isChecked
+                              ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-200'
+                              : 'hover:bg-slate-900 border border-transparent text-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {}}
+                              className="rounded border-slate-700 text-emerald-500 pointer-events-none"
+                            />
+                            {ch.logoUrl && (
+                              <img src={ch.logoUrl} alt="" className="w-5 h-5 rounded object-contain bg-slate-900 shrink-0" />
+                            )}
+                            <span className="font-medium truncate">{ch.name}</span>
+                          </div>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 shrink-0 ml-2">
+                            {ch.category?.name || 'Général'}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-                <div className="max-h-48 overflow-y-auto p-2 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
-                  {channels.map((ch) => (
-                    <label key={ch.id} className="flex items-center gap-2 text-xs text-slate-300 hover:bg-slate-900 p-1.5 rounded cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={editingShare.channelIds.includes(ch.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setEditingShare({ ...editingShare, channelIds: [...editingShare.channelIds, ch.id] });
-                          } else {
-                            setEditingShare({ ...editingShare, channelIds: editingShare.channelIds.filter((id) => id !== ch.id) });
-                          }
-                        }}
-                        className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
-                      />
-                      <span className="truncate">{ch.name}</span>
-                    </label>
-                  ))}
+
+                {/* Right: Selected Channels & Order */}
+                <div className="flex flex-col border border-slate-800 rounded-xl bg-slate-950 p-3 space-y-3 min-h-[300px]">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-300">
+                      2. Ordre dans la Playlist M3U ({editingShare.channelIds.length})
+                    </span>
+                    {editingShare.channelIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingShare({ ...editingShare, channelIds: [] })}
+                        className="text-red-400 hover:underline text-[11px]"
+                      >
+                        Tout retirer
+                      </button>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 italic">
+                    Les chaînes seront générées dans ce classement exact. Utilisez ▲ ▼ pour réordonner.
+                  </p>
+
+                  <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-56 md:max-h-72">
+                    {editingShare.channelIds.length === 0 ? (
+                      <div className="p-8 text-center text-slate-600 text-xs">
+                        Aucune chaîne sélectionnée.<br />
+                        <span className="text-slate-500 text-[11px]">Si aucune chaîne n'est choisie, toutes les chaînes actives seront incluses par défaut.</span>
+                      </div>
+                    ) : (
+                      editingShare.channelIds.map((id, index) => {
+                        const ch = channelMap.get(id);
+                        if (!ch) return null;
+                        return (
+                          <div
+                            key={id}
+                            className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-200"
+                          >
+                            <div className="flex items-center gap-2 truncate mr-2">
+                              <span className="w-5 h-5 rounded-full bg-slate-800 text-[10px] font-bold text-emerald-400 flex items-center justify-center shrink-0">
+                                {index + 1}
+                              </span>
+                              {ch.logoUrl && (
+                                <img src={ch.logoUrl} alt="" className="w-5 h-5 rounded object-contain bg-slate-950 shrink-0" />
+                              )}
+                              <span className="font-medium truncate">{ch.name}</span>
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                disabled={index === 0}
+                                onClick={(e) => { e.stopPropagation(); moveChannelToTop(index, true); }}
+                                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-emerald-400 disabled:opacity-30 disabled:pointer-events-none"
+                                title="Mettre en 1ère position"
+                              >
+                                <ArrowUpToLine className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={index === 0}
+                                onClick={(e) => { e.stopPropagation(); moveChannelUp(index, true); }}
+                                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-emerald-400 disabled:opacity-30 disabled:pointer-events-none"
+                                title="Monter"
+                              >
+                                <ArrowUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={index === editingShare.channelIds.length - 1}
+                                onClick={(e) => { e.stopPropagation(); moveChannelDown(index, true); }}
+                                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-emerald-400 disabled:opacity-30 disabled:pointer-events-none"
+                                title="Descendre"
+                              >
+                                <ArrowDown className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); toggleShareChannel(id, true); }}
+                                className="p-1 rounded hover:bg-red-500/20 text-slate-500 hover:text-red-400 ml-1"
+                                title="Retirer"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               </div>
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
                 <button
                   type="button"
                   onClick={() => {
                     setShowEditShareModal(false);
                     setEditingShare(null);
                   }}
-                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white"
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs"
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-slate-950"
+                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-slate-950 text-xs shadow-lg shadow-emerald-500/10"
                 >
-                  Enregistrer les modifications
+                  Enregistrer les modifications ({editingShare.channelIds.length} chaînes)
                 </button>
               </div>
             </form>
