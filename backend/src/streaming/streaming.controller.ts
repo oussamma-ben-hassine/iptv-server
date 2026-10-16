@@ -34,7 +34,7 @@ export class StreamingController {
   }
 
   @Get('admin/analytics')
-  @UseGuards(OidcAuthGuard, RolesGuard)
+  @UseGuards(AuthGuard)
   @Roles('ADMIN')
   @ApiOperation({ summary: 'Statistiques et sessions actives en temps réel' })
   async getRealtimeAnalytics() {
@@ -42,7 +42,7 @@ export class StreamingController {
   }
 
   @Delete('admin/sessions/:id')
-  @UseGuards(OidcAuthGuard, RolesGuard)
+  @UseGuards(AuthGuard)
   @Roles('ADMIN')
   @ApiOperation({ summary: 'Couper/terminer immédiatement une session de streaming' })
   async terminateSession(@Param('id') id: string) {
