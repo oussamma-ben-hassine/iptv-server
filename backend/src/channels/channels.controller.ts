@@ -79,6 +79,41 @@ export class ChannelsController {
       }));
     }
 
+    if (action === 'get_vod_categories') {
+      return [
+        { category_id: '1', category_name: 'Action', parent_id: 0 },
+        { category_id: '2', category_name: 'Comédie', parent_id: 0 },
+        { category_id: '3', category_name: 'Drame', parent_id: 0 },
+        { category_id: '4', category_name: 'Science-Fiction', parent_id: 0 },
+        { category_id: '5', category_name: 'Documentaire', parent_id: 0 },
+        { category_id: '6', category_name: 'Animation', parent_id: 0 },
+      ];
+    }
+
+    if (action === 'get_vod_streams') {
+      const movies = await this.channelsService.getPrisma().movie.findMany({
+        where: { isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      });
+
+      return movies.map((m, idx) => ({
+        num: idx + 1,
+        name: m.title,
+        title: m.title,
+        year: String(m.year || 2024),
+        stream_type: 'movie',
+        stream_id: m.id,
+        stream_icon: m.posterUrl || '',
+        rating: String(m.rating || '7.5'),
+        rating_5based: 4,
+        added: '1700000000',
+        category_id: '1',
+        container_extension: m.container || 'mp4',
+        custom_sid: '',
+        direct_source: m.streamUrl,
+      }));
+    }
+
     // Default Xtream auth response
     return {
       user_info: {

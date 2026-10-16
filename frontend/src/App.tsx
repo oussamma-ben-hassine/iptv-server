@@ -33,6 +33,7 @@ import {
   StopCircle,
   Infinity as InfinityIcon,
   HelpCircle,
+  Film,
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -46,7 +47,7 @@ interface User {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'channels' | 'shares' | 'epg'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'channels' | 'movies' | 'shares' | 'epg'>('dashboard');
   const [stats, setStats] = useState<any>(null);
   const [analytics, setAnalytics] = useState<any>({
     activeCount: 0,
@@ -57,6 +58,7 @@ export default function App() {
   });
   const [channels, setChannels] = useState<any[]>([]);
   const [sources, setSources] = useState<any[]>([]);
+  const [movies, setMovies] = useState<any[]>([]);
   const [shares, setShares] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -64,10 +66,28 @@ export default function App() {
   // Multi-selection states
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
+  const [selectedMovieIds, setSelectedMovieIds] = useState<string[]>([]);
 
   // Search & Filter inside Share Creation/Edition
   const [shareSearch, setShareSearch] = useState('');
   const [shareCategoryFilter, setShareCategoryFilter] = useState('');
+
+  // Movie Filter & Form
+  const [movieSearch, setMovieSearch] = useState('');
+  const [movieGenreFilter, setMovieGenreFilter] = useState('');
+  const [showAddMovieModal, setShowAddMovieModal] = useState(false);
+  const [newMovie, setNewMovie] = useState({
+    title: '',
+    streamUrl: '',
+    posterUrl: '',
+    year: new Date().getFullYear(),
+    rating: 7.5,
+    genre: 'Action',
+    durationMin: 110,
+    plot: '',
+    director: '',
+    container: 'mp4',
+  });
 
   // Modals & form state
   const [showAddSourceModal, setShowAddSourceModal] = useState(false);
@@ -119,13 +139,14 @@ export default function App() {
 
   const loadData = async () => {
     try {
-      const [statsRes, chRes, srcRes, shRes, catRes, analyticsRes] = await Promise.all([
+      const [statsRes, chRes, srcRes, shRes, catRes, analyticsRes, moviesRes] = await Promise.all([
         axios.get('/api/v1/admin/dashboard').catch(() => ({ data: null })),
         axios.get('/api/v1/admin/channels').catch(() => ({ data: [] })),
         axios.get('/api/v1/sources').catch(() => ({ data: [] })),
         axios.get('/api/v1/admin/shares').catch(() => ({ data: [] })),
         axios.get('/api/v1/categories').catch(() => ({ data: [] })),
         axios.get('/api/v1/admin/analytics').catch(() => ({ data: null })),
+        axios.get('/api/v1/admin/movies').catch(() => ({ data: [] })),
       ]);
 
       if (statsRes.data) setStats(statsRes.data);
@@ -134,8 +155,55 @@ export default function App() {
       if (shRes.data) setShares(shRes.data);
       if (catRes.data) setCategories(catRes.data);
       if (analyticsRes.data) setAnalytics(analyticsRes.data);
+      if (moviesRes.data) setMovies(moviesRes.data);
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleCreateMovie = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await axios.post('/api/v1/admin/movies', newMovie);
+      setShowAddMovieModal(false);
+      setNewMovie({
+        title: '',
+        streamUrl: '',
+        posterUrl: '',
+        year: new Date().getFullYear(),
+        rating: 7.5,
+        genre: 'Action',
+        durationMin: 110,
+        plot: '',
+        director: '',
+        container: 'mp4',
+      });
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  const handleDeleteMovie = async (id: string, title: string) => {
+    if (!confirm(`Supprimer définitivement le film "${title}" du catalogue VOD ?`)) return;
+    try {
+      await axios.delete(`/api/v1/admin/movies/${id}`);
+      setSelectedMovieIds((prev) => prev.filter((i) => i !== id));
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur de suppression: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  const handleBulkDeleteMovies = async () => {
+    if (selectedMovieIds.length === 0) return;
+    if (!confirm(`Supprimer définitivement les ${selectedMovieIds.length} films sélectionnés ?`)) return;
+    try {
+      await axios.post('/api/v1/admin/movies/bulk-delete', { ids: selectedMovieIds });
+      setSelectedMovieIds([]);
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur: ${e.response?.data?.message || e.message}`);
     }
   };
 
@@ -601,6 +669,7 @@ export default function App() {
               { id: 'dashboard', label: 'Dashboard', icon: Activity },
               { id: 'sources', label: 'Sources Vidéo', icon: Radio },
               { id: 'channels', label: 'Catalogue Chaînes', icon: Tv },
+              { id: 'movies', label: 'Films & VOD', icon: Film },
               { id: 'shares', label: 'Partages & M3U', icon: Share2 },
               { id: 'epg', label: 'Guide TV (EPG)', icon: Layers },
             ].map((tab) => {
@@ -657,6 +726,7 @@ export default function App() {
               {activeTab === 'dashboard' && 'Vue d\'ensemble'}
               {activeTab === 'sources' && 'Sources de Flux IPTV'}
               {activeTab === 'channels' && 'Gestion des Chaînes & EPG'}
+              {activeTab === 'movies' && 'Catalogue Films & VOD'}
               {activeTab === 'shares' && 'Accès de Distribution & Playlists M3U'}
               {activeTab === 'epg' && 'Guide Électronique des Programmes (EPG)'}
             </h2>
@@ -1144,6 +1214,189 @@ export default function App() {
                   );
                 })}
               </div>
+            </div>
+          );
+        })()}
+
+        {/* TAB: FILMS & VOD */}
+        {activeTab === 'movies' && (() => {
+          const filteredMovies = movies.filter((m) => {
+            const matchesSearch =
+              !movieSearch.trim() ||
+              m.title.toLowerCase().includes(movieSearch.toLowerCase()) ||
+              (m.genre && m.genre.toLowerCase().includes(movieSearch.toLowerCase())) ||
+              (m.director && m.director.toLowerCase().includes(movieSearch.toLowerCase()));
+            const matchesGenre = !movieGenreFilter || m.genre === movieGenreFilter;
+            return matchesSearch && matchesGenre;
+          });
+
+          const uniqueGenres = Array.from(new Set(movies.map((m) => m.genre).filter(Boolean)));
+
+          return (
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={() => setShowAddMovieModal(true)}
+                    className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/10"
+                  >
+                    <Plus className="w-4 h-4" /> Ajouter un film / VOD
+                  </button>
+                  {movies.length > 0 && (
+                    <button
+                      onClick={() => {
+                        if (selectedMovieIds.length === movies.length) setSelectedMovieIds([]);
+                        else setSelectedMovieIds(movies.map((m) => m.id));
+                      }}
+                      className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700"
+                    >
+                      {selectedMovieIds.length === movies.length ? 'Désélectionner tout' : 'Tout sélectionner'}
+                    </button>
+                  )}
+                </div>
+
+                <div className="text-xs text-slate-400">
+                  Total : <strong className="text-slate-200">{movies.length}</strong> film(s)
+                </div>
+              </div>
+
+              {/* Multi-selection Action Bar for Movies */}
+              {selectedMovieIds.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-2 text-sm text-emerald-300 font-semibold">
+                    <CheckSquare className="w-4 h-4 text-emerald-400" />
+                    <span>{selectedMovieIds.length} film(s) sélectionné(s) sur {movies.length}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleBulkDeleteMovies}
+                      className="py-1.5 px-3 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Supprimer la sélection ({selectedMovieIds.length})
+                    </button>
+                    <button
+                      onClick={() => setSelectedMovieIds([])}
+                      className="py-1.5 px-3 rounded-lg text-slate-400 hover:text-white text-xs"
+                    >
+                      Annuler
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Filters */}
+              <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
+                  <input
+                    type="text"
+                    placeholder="Rechercher par titre, genre ou réalisateur..."
+                    value={movieSearch}
+                    onChange={(e) => setMovieSearch(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div className="w-full sm:w-64">
+                  <select
+                    value={movieGenreFilter}
+                    onChange={(e) => setMovieGenreFilter(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs sm:text-sm text-slate-300 focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="">Tous les genres ({movies.length})</option>
+                    {uniqueGenres.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Grid of Movies */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                {filteredMovies.map((m) => {
+                  const isSelected = selectedMovieIds.includes(m.id);
+                  return (
+                    <div
+                      key={m.id}
+                      className={`group relative rounded-2xl border overflow-hidden flex flex-col justify-between transition-all ${
+                        isSelected
+                          ? 'bg-slate-900 border-emerald-500 shadow-lg shadow-emerald-500/10'
+                          : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      {/* Poster */}
+                      <div className="aspect-[2/3] bg-slate-950 relative overflow-hidden flex items-center justify-center">
+                        {m.posterUrl ? (
+                          <img
+                            src={m.posterUrl}
+                            alt={m.title}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                        ) : (
+                          <Film className="w-12 h-12 text-slate-700" />
+                        )}
+                        <div className="absolute top-2 left-2">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              setSelectedMovieIds((prev) =>
+                                prev.includes(m.id) ? prev.filter((i) => i !== m.id) : [...prev, m.id]
+                              );
+                            }}
+                            className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500 cursor-pointer"
+                          />
+                        </div>
+                        <div className="absolute top-2 right-2 flex items-center gap-1">
+                          <span className="px-1.5 py-0.5 rounded bg-black/70 backdrop-blur text-[10px] font-bold text-amber-400">
+                            ★ {m.rating || '7.5'}
+                          </span>
+                        </div>
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => setTestPlayerUrl(m.streamUrl)}
+                            className="p-2.5 rounded-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold shadow-lg transition-transform hover:scale-110"
+                            title="Regarder / Tester la vidéo"
+                          >
+                            <Play className="w-4 h-4 fill-current" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Info */}
+                      <div className="p-3 flex-1 flex flex-col justify-between">
+                        <div>
+                          <div className="font-bold text-white text-xs truncate" title={m.title}>
+                            {m.title}
+                          </div>
+                          <div className="text-[10px] text-slate-400 flex items-center justify-between mt-1">
+                            <span>{m.genre || 'Action'}</span>
+                            <span>{m.year || 2024}</span>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-800/80 mt-2 flex items-center justify-between text-[11px]">
+                          <span className="text-slate-500 uppercase font-mono text-[9px]">{m.container || 'mp4'}</span>
+                          <button
+                            onClick={() => handleDeleteMovie(m.id, m.title)}
+                            className="text-slate-500 hover:text-red-400 transition-colors p-1"
+                            title="Supprimer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {filteredMovies.length === 0 && (
+                <div className="p-12 text-center text-slate-500 text-xs">
+                  Aucun film correspondant. Cliquez sur « Ajouter un film / VOD » pour enrichir votre catalogue cinéma.
+                </div>
+              )}
             </div>
           );
         })()}
@@ -2047,6 +2300,128 @@ export default function App() {
                 </div>
               </div>
             )}
+          </div>
+      {/* Modal: Ajouter Film / VOD */}
+      {showAddMovieModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full shadow-2xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+              <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                <Film className="w-5 h-5 text-emerald-400" /> Ajouter un Film / VOD
+              </h3>
+              <button
+                onClick={() => setShowAddMovieModal(false)}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateMovie} className="space-y-3.5 overflow-y-auto pr-1 text-xs sm:text-sm">
+              <div>
+                <label className="block text-slate-400 text-xs mb-1">Titre du film *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Interstellar, Inception, Dune..."
+                  value={newMovie.title}
+                  onChange={(e) => setNewMovie({ ...newMovie, title: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-emerald-500 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-400 text-xs mb-1">URL directe de la vidéo (MP4, MKV ou HLS) *</label>
+                <input
+                  type="url"
+                  required
+                  placeholder="https://.../video.mp4 ou .m3u8"
+                  value={newMovie.streamUrl}
+                  onChange={(e) => setNewMovie({ ...newMovie, streamUrl: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-emerald-500 text-xs font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-400 text-xs mb-1">URL de la jaquette / Affiche (Poster)</label>
+                <input
+                  type="url"
+                  placeholder="https://image.tmdb.org/t/p/w500/... ou lien direct"
+                  value={newMovie.posterUrl}
+                  onChange={(e) => setNewMovie({ ...newMovie, posterUrl: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-emerald-500 text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-slate-400 text-xs mb-1">Année</label>
+                  <input
+                    type="number"
+                    value={newMovie.year}
+                    onChange={(e) => setNewMovie({ ...newMovie, year: parseInt(e.target.value) || 2024 })}
+                    className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 text-xs mb-1">Note (sur 10)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="1"
+                    max="10"
+                    value={newMovie.rating}
+                    onChange={(e) => setNewMovie({ ...newMovie, rating: parseFloat(e.target.value) || 7.5 })}
+                    className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 text-xs mb-1">Genre</label>
+                  <select
+                    value={newMovie.genre}
+                    onChange={(e) => setNewMovie({ ...newMovie, genre: e.target.value })}
+                    className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs"
+                  >
+                    <option value="Action">Action</option>
+                    <option value="Aventure">Aventure</option>
+                    <option value="Comédie">Comédie</option>
+                    <option value="Drame">Drame</option>
+                    <option value="Science-Fiction">Science-Fiction</option>
+                    <option value="Horreur">Horreur</option>
+                    <option value="Animation">Animation</option>
+                    <option value="Documentaire">Documentaire</option>
+                    <option value="Thriller">Thriller</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 text-xs mb-1">Synopsis / Résumé</label>
+                <textarea
+                  rows={2}
+                  placeholder="Court résumé de l'histoire..."
+                  value={newMovie.plot}
+                  onChange={(e) => setNewMovie({ ...newMovie, plot: e.target.value })}
+                  className="w-full p-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs"
+                ></textarea>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAddMovieModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-slate-950 text-xs shadow-lg shadow-emerald-500/10"
+                >
+                  Ajouter au catalogue VOD
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

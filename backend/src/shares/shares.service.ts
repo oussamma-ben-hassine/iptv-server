@@ -200,6 +200,30 @@ export class SharesService {
       m3u += `${playUrl}\n\n`;
     }
 
+    // Ajouter la section Films / VOD
+    try {
+      const movies = await this.prisma.movie.findMany({
+        where: { isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      });
+
+      if (movies.length > 0) {
+        m3u += '\n### SECTION FILMS & VOD ###\n\n';
+        for (const m of movies) {
+          const group = `Films | ${m.genre || 'Cinéma'}`;
+          let moviePlayUrl = m.streamUrl;
+          if (moviePlayUrl.includes('?') && !moviePlayUrl.includes('token=')) {
+            moviePlayUrl += `&token=${share.token}`;
+          } else if (!moviePlayUrl.includes('?')) {
+            moviePlayUrl += `?token=${share.token}`;
+          }
+
+          m3u += `#EXTINF:-1 tvg-id="${m.slug}" tvg-name="${m.title}" tvg-logo="${m.posterUrl || ''}" group-title="${group}",${m.title} (${m.year || ''})\n`;
+          m3u += `${moviePlayUrl}\n\n`;
+        }
+      }
+    } catch {}
+
     return m3u;
   }
 }

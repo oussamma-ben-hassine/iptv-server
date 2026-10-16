@@ -125,6 +125,26 @@ model PlaybackSession {
   @@index([shareAccessId, lastPingAt])
 }
 
+model Movie {
+  id          String   @id @default(uuid())
+  title       String
+  slug        String   @unique
+  posterUrl   String?
+  backdropUrl String?
+  streamUrl   String
+  container   String   @default("mp4") // mp4, mkv, m3u8
+  year        Int?
+  rating      Float?
+  genre       String?  @default("Action")
+  durationMin Int?
+  plot        String?
+  director    String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 model SystemLog {
   id        String   @id @default(uuid())
   level     String   @default("info")
@@ -133,3 +153,4 @@ model SystemLog {
   metadata  Json?
   createdAt DateTime @default(now())
 }
+

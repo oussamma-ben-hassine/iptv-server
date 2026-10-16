@@ -5,6 +5,10 @@ import { PrismaService } from '../common/prisma.service';
 export class ChannelsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  getPrisma() {
+    return this.prisma;
+  }
+
   async findAllPublic(token?: string) {
     const host = (process.env.APP_URL || 'https://iptv.oussamma.tn').replace(/\/$/, '');
 
