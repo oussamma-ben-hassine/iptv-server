@@ -34,6 +34,9 @@ import {
   Infinity as InfinityIcon,
   HelpCircle,
   Film,
+  Sparkles,
+  Loader2,
+  Globe,
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -88,6 +91,15 @@ export default function App() {
     director: '',
     container: 'mp4',
   });
+
+  // AI Assistant States (LiteLLM)
+  const [showAiMovieModal, setShowAiMovieModal] = useState(false);
+  const [aiMovieInput, setAiMovieInput] = useState('');
+  const [aiMovieLoading, setAiMovieLoading] = useState(false);
+
+  const [showAiChannelModal, setShowAiChannelModal] = useState(false);
+  const [aiChannelInput, setAiChannelInput] = useState('');
+  const [aiChannelLoading, setAiChannelLoading] = useState(false);
 
   // Modals & form state
   const [showAddSourceModal, setShowAddSourceModal] = useState(false);
@@ -204,6 +216,80 @@ export default function App() {
       loadData();
     } catch (e: any) {
       alert(`Erreur: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  // --- AI LiteLLM Handlers ---
+  const handleAiParseMovie = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!aiMovieInput.trim()) return;
+    setAiMovieLoading(true);
+    try {
+      const res = await axios.post('/api/v1/ai/parse-movie', { input: aiMovieInput });
+      if (res.data) {
+        setNewMovie({
+          title: res.data.title || '',
+          streamUrl: res.data.streamUrl || '',
+          posterUrl: res.data.posterUrl || '',
+          year: res.data.year || new Date().getFullYear(),
+          rating: res.data.rating || 7.5,
+          genre: res.data.genre || 'Action',
+          durationMin: res.data.durationMin || 110,
+          plot: res.data.plot || '',
+          director: res.data.director || '',
+          container: 'mp4',
+        });
+        setShowAiMovieModal(false);
+        setAiMovieInput('');
+        setShowAddMovieModal(true);
+      }
+    } catch (err: any) {
+      alert(`Erreur IA LiteLLM: ${err.response?.data?.message || err.message}`);
+    } finally {
+      setAiMovieLoading(false);
+    }
+  };
+
+  const handleAiParseChannel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!aiChannelInput.trim()) return;
+    setAiChannelLoading(true);
+    try {
+      const res = await axios.post('/api/v1/ai/parse-channel', { input: aiChannelInput });
+      if (res.data) {
+        // Chercher ou assigner la catégorie
+        let matchedCatId = '';
+        if (res.data.category && categories.length > 0) {
+          const found = categories.find((c) => c.name.toLowerCase().includes(res.data.category.toLowerCase()));
+          if (found) matchedCatId = found.id;
+          else matchedCatId = categories[0].id;
+        }
+
+        const slugBase = (res.data.name || 'ch').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        setNewChannel({
+          name: res.data.name || '',
+          slug: `${slugBase}-${Date.now().toString(36)}`,
+          logoUrl: res.data.logoUrl || '',
+          categoryId: matchedCatId,
+          country: res.data.country || 'TN',
+        });
+
+        if (res.data.streamUrl) {
+          setNewSource((prev) => ({
+            ...prev,
+            name: `${res.data.name} (Source Principale)`,
+            url: res.data.streamUrl,
+          }));
+        }
+
+        setShowAiChannelModal(false);
+        setAiChannelInput('');
+        setShowAddChannelModal(true);
+      }
+    } catch (err: any) {
+      alert(`Erreur IA LiteLLM: ${err.response?.data?.message || err.message}`);
+    } finally {
+      setAiChannelLoading(false);
     }
   };
 
@@ -1092,6 +1178,16 @@ export default function App() {
                   >
                     <Plus className="w-4 h-4" /> Nouvelle Chaîne
                   </button>
+                  <button
+                    onClick={() => {
+                      setAiChannelInput('');
+                      setShowAiChannelModal(true);
+                    }}
+                    className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-purple-500/20"
+                    title="Ajouter automatiquement une chaîne par son nom grâce à LiteLLM"
+                  >
+                    <Sparkles className="w-4 h-4 text-amber-300" /> Assistant IA (LiteLLM)
+                  </button>
                   {channels.length > 0 && (
                     <button
                       onClick={handleToggleSelectAllChannels}
@@ -1240,7 +1336,17 @@ export default function App() {
                     onClick={() => setShowAddMovieModal(true)}
                     className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/10"
                   >
-                    <Plus className="w-4 h-4" /> Ajouter un film / VOD
+                    <Plus className="w-4 h-4" /> Ajouter manuellement
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAiMovieInput('');
+                      setShowAiMovieModal(true);
+                    }}
+                    className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-purple-500/20"
+                    title="Ajouter un film par nom ou par URL grâce à l'IA LiteLLM"
+                  >
+                    <Sparkles className="w-4 h-4 text-amber-300" /> Ajouter par IA (Nom ou URL)
                   </button>
                   {movies.length > 0 && (
                     <button
@@ -2422,6 +2528,146 @@ export default function App() {
                   className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-slate-950 text-xs shadow-lg shadow-emerald-500/10"
                 >
                   Ajouter au catalogue VOD
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Assistant IA Film (LiteLLM) */}
+      {showAiMovieModal && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-purple-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl relative overflow-hidden">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                  <Sparkles className="w-5 h-5 text-amber-300" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-base">Assistant IA Film & VOD</h3>
+                  <p className="text-[11px] text-purple-300 font-medium">Propulsé par LiteLLM (ai.oussamma.tn)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAiMovieModal(false)}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAiParseMovie} className="space-y-4">
+              <div>
+                <label className="block text-slate-300 text-xs font-semibold mb-1.5">
+                  Nom du film OU URL d'une page web :
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Inception, Gladiator 2 ou https://..."
+                  value={aiMovieInput}
+                  onChange={(e) => setAiMovieInput(e.target.value)}
+                  className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                />
+                <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+                  💡 <strong>Comment ça marche ?</strong> L'IA extrait automatiquement l'affiche officielle HD, l'année, le genre, la note et le résumé complet, puis pré-remplit la fiche pour vous.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2 border-t border-slate-800/80">
+                <button
+                  type="button"
+                  disabled={aiMovieLoading}
+                  onClick={() => setShowAiMovieModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={aiMovieLoading}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-purple-500/20 disabled:opacity-50"
+                >
+                  {aiMovieLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> Analyse IA en cours...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 text-amber-300" /> Analyser & Pré-remplir
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Assistant IA Chaîne TV (LiteLLM) */}
+      {showAiChannelModal && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-purple-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl relative overflow-hidden">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                  <Sparkles className="w-5 h-5 text-amber-300" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-base">Assistant IA Chaîne TV</h3>
+                  <p className="text-[11px] text-purple-300 font-medium">Propulsé par LiteLLM (ai.oussamma.tn)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAiChannelModal(false)}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAiParseChannel} className="space-y-4">
+              <div>
+                <label className="block text-slate-300 text-xs font-semibold mb-1.5">
+                  Nom de la chaîne OU URL du flux :
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: TF1, BeIN Sports 1, El Watania 1..."
+                  value={aiChannelInput}
+                  onChange={(e) => setAiChannelInput(e.target.value)}
+                  className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                />
+                <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+                  💡 <strong>Détection intelligente :</strong> L'IA détecte le logo officiel haute définition, le code EPG XMLTV, la catégorie et le pays.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2 border-t border-slate-800/80">
+                <button
+                  type="button"
+                  disabled={aiChannelLoading}
+                  onClick={() => setShowAiChannelModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={aiChannelLoading}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-purple-500/20 disabled:opacity-50"
+                >
+                  {aiChannelLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> Analyse IA en cours...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 text-amber-300" /> Identifier la chaîne
+                    </>
+                  )}
                 </button>
               </div>
             </form>

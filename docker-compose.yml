@@ -52,6 +52,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-iptv-server-super-secret-production-key-2026}
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-oussammabenhassine@gmail.com}
       MEDIAMTX_API_URL: http://mediamtx:9997
+      LITELLM_BASE_URL: ${LITELLM_BASE_URL:-https://ai.oussamma.tn/v1}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-sk-oussamma-master-gateway-2026}
+      LITELLM_MODEL: ${LITELLM_MODEL:-gemini/gemini-3.1-flash-lite-preview}
     depends_on:
       postgres:
         condition: service_healthy
