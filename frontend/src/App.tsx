@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Tv,
   Radio,
@@ -18,6 +18,10 @@ import {
   Sliders,
   Menu,
   X,
+  Trash2,
+  Edit,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -31,7 +35,7 @@ interface User {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'channels' | 'shares' | 'epg' | 'logs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'channels' | 'shares' | 'epg'>('dashboard');
   const [stats, setStats] = useState<any>(null);
   const [channels, setChannels] = useState<any[]>([]);
   const [sources, setSources] = useState<any[]>([]);
@@ -42,15 +46,29 @@ export default function App() {
   // Modals & form state
   const [showAddSourceModal, setShowAddSourceModal] = useState(false);
   const [newSource, setNewSource] = useState({ name: '', url: '', type: 'HLS', channelId: '', priority: 1 });
+  
   const [showAddChannelModal, setShowAddChannelModal] = useState(false);
   const [newChannel, setNewChannel] = useState({ name: '', slug: '', logoUrl: '', categoryId: '', country: 'TN' });
+  
   const [showAddShareModal, setShowAddShareModal] = useState(false);
   const [newShare, setNewShare] = useState({ name: '', maxSessions: 2, channelIds: [] as string[] });
+
+  const [showEditShareModal, setShowEditShareModal] = useState(false);
+  const [editingShare, setEditingShare] = useState<{
+    id: string;
+    name: string;
+    maxSessions: number;
+    isActive: boolean;
+    channelIds: string[];
+  } | null>(null);
+
   const [m3uPreviewModal, setM3uPreviewModal] = useState(false);
   const [m3uRawText, setM3uRawText] = useState('');
   const [m3uParsedItems, setM3uParsedItems] = useState<any[]>([]);
   const [selectedM3uItems, setSelectedM3uItems] = useState<number[]>([]);
   const [testPlayerUrl, setTestPlayerUrl] = useState<string | null>(null);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     checkAuth();
@@ -100,6 +118,7 @@ export default function App() {
     window.location.href = '/api/v1/auth/logout';
   };
 
+  // --- Sources Handlers ---
   const handleCheckSource = async (id: string) => {
     try {
       await axios.post(`/api/v1/sources/${id}/check`);
@@ -121,6 +140,17 @@ export default function App() {
     }
   };
 
+  const handleDeleteSource = async (id: string, name: string) => {
+    if (!confirm(`Êtes-vous sûr de vouloir supprimer définitivement la source "${name}" ?`)) return;
+    try {
+      await axios.delete(`/api/v1/sources/${id}`);
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur de suppression: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  // --- Channels Handlers ---
   const handleCreateChannel = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -133,12 +163,53 @@ export default function App() {
     }
   };
 
+  const handleDeleteChannel = async (id: string, name: string) => {
+    if (!confirm(`Supprimer définitivement la chaîne "${name}" et toutes ses sources associées ?`)) return;
+    try {
+      await axios.delete(`/api/v1/admin/channels/${id}`);
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur de suppression: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  // --- Shares Handlers ---
   const handleCreateShare = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       await axios.post('/api/v1/admin/shares', newShare);
       setShowAddShareModal(false);
       setNewShare({ name: '', maxSessions: 2, channelIds: [] });
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  const handleOpenEditShare = (sh: any) => {
+    const existingIds = (sh.allowedChannels || []).map((item: any) => item.channelId || item.channel?.id || item.id);
+    setEditingShare({
+      id: sh.id,
+      name: sh.name,
+      maxSessions: sh.maxSessions || 2,
+      isActive: sh.isActive ?? true,
+      channelIds: existingIds,
+    });
+    setShowEditShareModal(true);
+  };
+
+  const handleUpdateShare = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingShare) return;
+    try {
+      await axios.put(`/api/v1/admin/shares/${editingShare.id}`, {
+        name: editingShare.name,
+        maxSessions: editingShare.maxSessions,
+        isActive: editingShare.isActive,
+        channelIds: editingShare.channelIds,
+      });
+      setShowEditShareModal(false);
+      setEditingShare(null);
       loadData();
     } catch (e: any) {
       alert(`Erreur: ${e.response?.data?.message || e.message}`);
@@ -155,6 +226,17 @@ export default function App() {
     }
   };
 
+  const handleDeleteShare = async (id: string, name: string) => {
+    if (!confirm(`Supprimer définitivement l'accès de partage M3U "${name}" ?`)) return;
+    try {
+      await axios.delete(`/api/v1/admin/shares/${id}`);
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur de suppression: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  // --- M3U Import Handlers ---
   const handlePreviewM3U = async () => {
     if (!m3uRawText.trim()) return;
     try {
@@ -449,13 +531,23 @@ export default function App() {
                             <span className="text-slate-400 text-xs font-medium">Non vérifié</span>
                           )}
                         </td>
-                        <td className="p-4 text-right space-x-2">
-                          <button
-                            onClick={() => handleCheckSource(src.id)}
-                            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 transition-colors"
-                          >
-                            Tester
-                          </button>
+                        <td className="p-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleCheckSource(src.id)}
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 transition-colors"
+                              title="Tester la connectivité"
+                            >
+                              Tester
+                            </button>
+                            <button
+                              onClick={() => handleDeleteSource(src.id, src.name)}
+                              className="p-1.5 rounded-lg hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors"
+                              title="Supprimer la source"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -469,29 +561,43 @@ export default function App() {
         {/* TAB 3: CHANNELS */}
         {activeTab === 'channels' && (
           <div className="space-y-6">
-            <button
-              onClick={() => setShowAddChannelModal(true)}
-              className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/10"
-            >
-              <Plus className="w-4 h-4" /> Nouvelle Chaîne
-            </button>
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setShowAddChannelModal(true)}
+                className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/10"
+              >
+                <Plus className="w-4 h-4" /> Nouvelle Chaîne
+              </button>
+              <div className="text-xs text-slate-400">
+                Total : <strong className="text-slate-200">{channels.length}</strong> chaînes configurées
+              </div>
+            </div>
 
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {channels.map((ch) => (
                 <div key={ch.id} className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col justify-between">
                   <div>
-                    <div className="flex items-center gap-3 mb-3">
-                      {ch.logoUrl ? (
-                        <img src={ch.logoUrl} alt={ch.name} className="w-10 h-10 object-contain rounded-lg bg-slate-950 p-1 border border-slate-800" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 font-bold">
-                          {ch.name[0]}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        {ch.logoUrl ? (
+                          <img src={ch.logoUrl} alt={ch.name} className="w-10 h-10 object-contain rounded-lg bg-slate-950 p-1 border border-slate-800" />
+                        ) : (
+                          <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 font-bold">
+                            {ch.name[0]}
+                          </div>
+                        )}
+                        <div>
+                          <div className="font-bold text-white text-base">{ch.name}</div>
+                          <div className="text-xs text-slate-400">{ch.category?.name || 'Général'} • {ch.country}</div>
                         </div>
-                      )}
-                      <div>
-                        <div className="font-bold text-white text-base">{ch.name}</div>
-                        <div className="text-xs text-slate-400">{ch.category?.name || 'Général'} • {ch.country}</div>
                       </div>
+                      <button
+                        onClick={() => handleDeleteChannel(ch.id, ch.name)}
+                        className="p-1.5 rounded-lg hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-colors"
+                        title="Supprimer la chaîne"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                     <div className="text-xs text-slate-400 mb-4">
                       Sources associées : <span className="font-semibold text-slate-200">{ch.sources?.length || 0}</span>
@@ -518,12 +624,17 @@ export default function App() {
         {/* TAB 4: SHARES & M3U */}
         {activeTab === 'shares' && (
           <div className="space-y-6">
-            <button
-              onClick={() => setShowAddShareModal(true)}
-              className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/10"
-            >
-              <Plus className="w-4 h-4" /> Créer un accès de partage M3U
-            </button>
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setShowAddShareModal(true)}
+                className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/10"
+              >
+                <Plus className="w-4 h-4" /> Créer un accès de partage M3U
+              </button>
+              <div className="text-xs text-slate-400">
+                Total : <strong className="text-slate-200">{shares.length}</strong> partages
+              </div>
+            </div>
 
             <div className="grid md:grid-cols-2 gap-4">
               {shares.map((sh) => {
@@ -533,13 +644,31 @@ export default function App() {
                     <div>
                       <div className="flex items-center justify-between mb-3">
                         <span className="font-bold text-white text-base">{sh.name}</span>
-                        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${sh.isActive ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400'}`}>
-                          {sh.isActive ? 'Actif' : 'Révoqué'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded text-xs font-semibold ${sh.isActive ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400'}`}>
+                            {sh.isActive ? 'Actif' : 'Révoqué'}
+                          </span>
+                          <button
+                            onClick={() => handleOpenEditShare(sh)}
+                            className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                            title="Modifier ce partage"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteShare(sh.id, sh.name)}
+                            className="p-1 rounded-lg hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-colors"
+                            title="Supprimer ce partage"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                       <div className="text-xs text-slate-400 space-y-1 mb-4">
                         <div>Sessions max simultanées : <strong className="text-slate-200">{sh.maxSessions}</strong></div>
-                        <div>Chaînes autorisées : <strong className="text-slate-200">{sh.allowedChannels?.length || 0}</strong></div>
+                        <div>
+                          Chaînes autorisées : <strong className="text-slate-200">{sh.allowedChannels?.length || 0}</strong> / {channels.length}
+                        </div>
                       </div>
 
                       {sh.isActive && (
@@ -565,14 +694,22 @@ export default function App() {
                       >
                         <ExternalLink className="w-3.5 h-3.5" /> Télécharger M3U
                       </a>
-                      {sh.isActive && (
+                      <div className="flex items-center gap-3">
                         <button
-                          onClick={() => handleRevokeShare(sh.id)}
-                          className="text-xs text-red-400 hover:text-red-300 font-semibold"
+                          onClick={() => handleOpenEditShare(sh)}
+                          className="text-xs text-blue-400 hover:text-blue-300 font-semibold"
                         >
-                          Révoquer l'accès
+                          Modifier
                         </button>
-                      )}
+                        {sh.isActive && (
+                          <button
+                            onClick={() => handleRevokeShare(sh.id)}
+                            className="text-xs text-red-400 hover:text-red-300 font-semibold"
+                          >
+                            Révoquer
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -600,6 +737,47 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Modal: Player de flux en direct */}
+      {testPlayerUrl && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl flex flex-col space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                <Play className="w-5 h-5 text-emerald-400" /> Prévisualisation du Flux en Direct
+              </h3>
+              <button
+                onClick={() => setTestPlayerUrl(null)}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="aspect-video bg-black rounded-xl overflow-hidden flex items-center justify-center border border-slate-800">
+              <video
+                ref={videoRef}
+                src={testPlayerUrl}
+                controls
+                autoPlay
+                className="w-full h-full object-contain"
+              >
+                Votre navigateur ne prend pas en charge la balise vidéo.
+              </video>
+            </div>
+
+            <div className="text-xs text-slate-400 flex items-center justify-between">
+              <span className="font-mono truncate max-w-md">{window.location.origin}{testPlayerUrl}</span>
+              <button
+                onClick={() => copyToClipboard(`${window.location.origin}${testPlayerUrl}`)}
+                className="text-emerald-400 hover:underline flex items-center gap-1 font-semibold"
+              >
+                <Copy className="w-3.5 h-3.5" /> Copier l'URL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Ajouter Source */}
       {showAddSourceModal && (
@@ -712,11 +890,11 @@ export default function App() {
       {/* Modal: Créer Partage */}
       {showAddShareModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl max-h-[90vh] flex flex-col">
             <h3 className="font-bold text-white text-lg mb-4">Créer un Accès de Partage M3U</h3>
-            <form onSubmit={handleCreateShare} className="space-y-4 text-xs sm:text-sm">
+            <form onSubmit={handleCreateShare} className="space-y-4 text-xs sm:text-sm flex-1 overflow-y-auto pr-1">
               <div>
-                <label className="block text-slate-400 mb-1">Nom de l'accès (Ex: Salon TV, Salon IPTV)</label>
+                <label className="block text-slate-400 mb-1">Nom de l'accès (Ex: Salon TV, Chambre IPTV)</label>
                 <input
                   type="text"
                   required
@@ -738,10 +916,31 @@ export default function App() {
                 />
               </div>
               <div>
-                <label className="block text-slate-400 mb-1">Attribuer des chaînes</label>
-                <div className="max-h-40 overflow-y-auto p-2 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-slate-400">
+                    Attribuer des chaînes ({newShare.channelIds.length}/{channels.length})
+                  </label>
+                  <div className="flex gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setNewShare({ ...newShare, channelIds: channels.map((c) => c.id) })}
+                      className="text-emerald-400 hover:underline"
+                    >
+                      Tout sélectionner
+                    </button>
+                    <span className="text-slate-600">|</span>
+                    <button
+                      type="button"
+                      onClick={() => setNewShare({ ...newShare, channelIds: [] })}
+                      className="text-slate-400 hover:underline"
+                    >
+                      Désélectionner
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-48 overflow-y-auto p-2 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
                   {channels.map((ch) => (
-                    <label key={ch.id} className="flex items-center gap-2 text-xs text-slate-300 hover:bg-slate-900 p-1 rounded cursor-pointer">
+                    <label key={ch.id} className="flex items-center gap-2 text-xs text-slate-300 hover:bg-slate-900 p-1.5 rounded cursor-pointer">
                       <input
                         type="checkbox"
                         checked={newShare.channelIds.includes(ch.id)}
@@ -754,7 +953,7 @@ export default function App() {
                         }}
                         className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
                       />
-                      <span>{ch.name}</span>
+                      <span className="truncate">{ch.name}</span>
                     </label>
                   ))}
                 </div>
@@ -772,6 +971,110 @@ export default function App() {
                   className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-slate-950"
                 >
                   Générer le Partage
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Modifier Partage */}
+      {showEditShareModal && editingShare && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl max-h-[90vh] flex flex-col">
+            <h3 className="font-bold text-white text-lg mb-4">Modifier l'Accès de Partage M3U</h3>
+            <form onSubmit={handleUpdateShare} className="space-y-4 text-xs sm:text-sm flex-1 overflow-y-auto pr-1">
+              <div>
+                <label className="block text-slate-400 mb-1">Nom de l'accès</label>
+                <input
+                  type="text"
+                  required
+                  value={editingShare.name}
+                  onChange={(e) => setEditingShare({ ...editingShare, name: e.target.value })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-400 mb-1">Nombre maximal d'écrans simultanés</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={editingShare.maxSessions}
+                  onChange={(e) => setEditingShare({ ...editingShare, maxSessions: parseInt(e.target.value) || 2 })}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={editingShare.isActive}
+                    onChange={(e) => setEditingShare({ ...editingShare, isActive: e.target.checked })}
+                    className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
+                  />
+                  <span>Accès actif (décocher pour suspendre)</span>
+                </label>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-slate-400">
+                    Attribuer des chaînes ({editingShare.channelIds.length}/{channels.length})
+                  </label>
+                  <div className="flex gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setEditingShare({ ...editingShare, channelIds: channels.map((c) => c.id) })}
+                      className="text-emerald-400 hover:underline"
+                    >
+                      Tout sélectionner
+                    </button>
+                    <span className="text-slate-600">|</span>
+                    <button
+                      type="button"
+                      onClick={() => setEditingShare({ ...editingShare, channelIds: [] })}
+                      className="text-slate-400 hover:underline"
+                    >
+                      Désélectionner
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-48 overflow-y-auto p-2 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                  {channels.map((ch) => (
+                    <label key={ch.id} className="flex items-center gap-2 text-xs text-slate-300 hover:bg-slate-900 p-1.5 rounded cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editingShare.channelIds.includes(ch.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setEditingShare({ ...editingShare, channelIds: [...editingShare.channelIds, ch.id] });
+                          } else {
+                            setEditingShare({ ...editingShare, channelIds: editingShare.channelIds.filter((id) => id !== ch.id) });
+                          }
+                        }}
+                        className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500"
+                      />
+                      <span className="truncate">{ch.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditShareModal(false);
+                    setEditingShare(null);
+                  }}
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-slate-950"
+                >
+                  Enregistrer les modifications
                 </button>
               </div>
             </form>

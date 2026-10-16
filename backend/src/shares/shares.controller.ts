@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Delete,
   Body,
   Param,
@@ -33,6 +34,14 @@ export class SharesController {
   @ApiOperation({ summary: 'Créer un nouvel accès de partage avec jeton' })
   create(@Body() body: any) {
     return this.sharesService.create(body);
+  }
+
+  @Put('admin/shares/:id')
+  @UseGuards(AuthGuard)
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Modifier un accès de partage (nom, chaînes, validité, sessions)' })
+  update(@Param('id') id: string, @Body() body: any) {
+    return this.sharesService.update(id, body);
   }
 
   @Post('admin/shares/:id/revoke')

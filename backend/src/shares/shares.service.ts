@@ -69,9 +69,62 @@ export class SharesService {
         })),
         skipDuplicates: true,
       });
+    } else {
+      // Si aucune chaîne n'est explicitement cochée, inclure par défaut toutes les chaînes actives
+      const allActiveChannels = await this.prisma.channel.findMany({
+        where: { isActive: true },
+        select: { id: true },
+      });
+      if (allActiveChannels.length > 0) {
+        await this.prisma.shareChannel.createMany({
+          data: allActiveChannels.map((c) => ({
+            shareAccessId: share.id,
+            channelId: c.id,
+          })),
+          skipDuplicates: true,
+        });
+      }
     }
 
     return this.findOne(share.id);
+  }
+
+  async update(id: string, data: {
+    name?: string;
+    maxSessions?: number;
+    expiresAt?: Date | string | null;
+    channelIds?: string[];
+    isActive?: boolean;
+  }) {
+    const updateData: any = {};
+    if (data.name !== undefined) updateData.name = data.name;
+    if (data.maxSessions !== undefined) updateData.maxSessions = data.maxSessions;
+    if (data.isActive !== undefined) updateData.isActive = data.isActive;
+    if (data.expiresAt !== undefined) {
+      updateData.expiresAt = data.expiresAt ? new Date(data.expiresAt) : null;
+    }
+
+    await this.prisma.shareAccess.update({
+      where: { id },
+      data: updateData,
+    });
+
+    if (data.channelIds !== undefined) {
+      await this.prisma.shareChannel.deleteMany({
+        where: { shareAccessId: id },
+      });
+      if (data.channelIds.length > 0) {
+        await this.prisma.shareChannel.createMany({
+          data: data.channelIds.map((cid) => ({
+            shareAccessId: id,
+            channelId: cid,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    return this.findOne(id);
   }
 
   async revoke(id: string) {
