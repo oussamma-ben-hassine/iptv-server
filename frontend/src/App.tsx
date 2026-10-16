@@ -2301,6 +2301,9 @@ export default function App() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
       {/* Modal: Ajouter Film / VOD */}
       {showAddMovieModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
