@@ -25,10 +25,10 @@ services:
   # 2. MOTEUR STREAMING MEDIAMTX
   # --------------------------------------------------------------------------
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    build:
+      context: ./mediamtx
+      dockerfile: Dockerfile
     restart: unless-stopped
-    volumes:
-      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
     networks:
       - iptv-net
 
