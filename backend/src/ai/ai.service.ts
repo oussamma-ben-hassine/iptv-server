@@ -6,45 +6,52 @@ export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly baseUrl = (process.env.LITELLM_BASE_URL || 'https://ai.oussamma.tn/v1').replace(/\/$/, '');
   private readonly apiKey = process.env.LITELLM_API_KEY || 'sk-oussamma-master-gateway-2026';
-  private readonly defaultModel = process.env.LITELLM_MODEL || 'gemini/gemini-3.1-flash-lite-preview';
+  private readonly defaultModel = process.env.LITELLM_MODEL || 'gpt-4o-mini';
+  private readonly fallbackModels = ['gpt-4o-mini', 'gpt-4o', 'chatgpt'];
 
   /**
    * Appelle LiteLLM avec un prompt système et un prompt utilisateur, et retourne un JSON pur
    */
   async generateJson(systemPrompt: string, userPrompt: string): Promise<any> {
-    try {
-      const response = await axios.post(
-        `${this.baseUrl}/chat/completions`,
-        {
-          model: this.defaultModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          temperature: 0.1,
-          response_format: { type: 'json_object' },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
+    const modelsToTry = [this.defaultModel, ...this.fallbackModels.filter((m) => m !== this.defaultModel)];
+    let lastError: any = null;
+
+    for (const model of modelsToTry) {
+      try {
+        const response = await axios.post(
+          `${this.baseUrl}/chat/completions`,
+          {
+            model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+            temperature: 0.1,
+            response_format: { type: 'json_object' },
           },
-          timeout: 25000,
-        },
-      );
+          {
+            headers: {
+              Authorization: `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 25000,
+          },
+        );
 
-      const content = response.data?.choices?.[0]?.message?.content;
-      if (!content) {
-        throw new Error('Réponse vide de LiteLLM');
+        const content = response.data?.choices?.[0]?.message?.content;
+        if (!content) continue;
+
+        // Nettoyer d'éventuels backticks markdown
+        const cleaned = content.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+        return JSON.parse(cleaned);
+      } catch (err: any) {
+        lastError = err;
+        this.logger.warn(`Échec modèle LiteLLM ${model}: ${err.message}. Essai du modèle suivant...`);
       }
-
-      // Nettoyer d'éventuels backticks markdown
-      const cleaned = content.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-      return JSON.parse(cleaned);
-    } catch (err: any) {
-      this.logger.error(`Erreur LiteLLM: ${err.message}`);
-      throw new Error(`Erreur du service IA LiteLLM: ${err.response?.data?.error?.message || err.message}`);
     }
+
+    this.logger.error(`Tous les modèles LiteLLM ont échoué. Dernière erreur: ${lastError?.message}`);
+    throw new Error(`Erreur du service IA LiteLLM: ${lastError?.response?.data?.error?.message || lastError?.message || 'Erreur inconnue'}`);
   }
 
   /**

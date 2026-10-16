@@ -54,7 +54,7 @@ services:
       MEDIAMTX_API_URL: http://mediamtx:9997
       LITELLM_BASE_URL: ${LITELLM_BASE_URL:-https://ai.oussamma.tn/v1}
       LITELLM_API_KEY: ${LITELLM_API_KEY:-sk-oussamma-master-gateway-2026}
-      LITELLM_MODEL: ${LITELLM_MODEL:-gemini/gemini-3.1-flash-lite-preview}
+      LITELLM_MODEL: ${LITELLM_MODEL:-gpt-4o-mini}
     depends_on:
       postgres:
         condition: service_healthy
