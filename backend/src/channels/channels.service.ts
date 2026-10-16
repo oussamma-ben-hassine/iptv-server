@@ -85,6 +85,21 @@ export class ChannelsService {
     return this.prisma.channel.delete({ where: { id } });
   }
 
+  async deleteMany(ids: string[]) {
+    if (!ids || ids.length === 0) return { deletedCount: 0 };
+    const res = await this.prisma.channel.deleteMany({
+      where: { id: { in: ids } },
+    });
+    return { deletedCount: res.count };
+  }
+
+  async cleanupOrphans() {
+    const res = await this.prisma.channel.deleteMany({
+      where: { sources: { none: {} } },
+    });
+    return { cleanedCount: res.count };
+  }
+
   async getCategories() {
     return this.prisma.category.findMany({
       include: {

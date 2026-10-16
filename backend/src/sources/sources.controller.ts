@@ -49,6 +49,14 @@ export class SourcesController {
     return this.sourcesService.delete(id);
   }
 
+  @Post('bulk-delete')
+  @UseGuards(AuthGuard)
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Supprimer plusieurs sources vidéo et synchroniser le catalogue' })
+  bulkDelete(@Body('ids') ids: string[]) {
+    return this.sourcesService.deleteMany(ids);
+  }
+
   @Post(':id/check')
   @UseGuards(AuthGuard)
   @Roles('ADMIN')

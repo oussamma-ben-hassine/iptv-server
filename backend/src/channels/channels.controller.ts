@@ -68,6 +68,22 @@ export class ChannelsController {
     return this.channelsService.delete(id);
   }
 
+  @Post('admin/channels/bulk-delete')
+  @UseGuards(AuthGuard)
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Supprimer plusieurs chaînes simultanément' })
+  bulkDeleteChannels(@Body('ids') ids: string[]) {
+    return this.channelsService.deleteMany(ids);
+  }
+
+  @Post('admin/channels/cleanup-orphans')
+  @UseGuards(AuthGuard)
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Supprimer automatiquement toutes les chaînes sans source' })
+  cleanupOrphans() {
+    return this.channelsService.cleanupOrphans();
+  }
+
   @Post('admin/categories')
   @UseGuards(AuthGuard)
   @Roles('ADMIN')

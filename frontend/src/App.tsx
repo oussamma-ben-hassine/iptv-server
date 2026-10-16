@@ -43,6 +43,10 @@ export default function App() {
   const [categories, setCategories] = useState<any[]>([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Multi-selection states
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
+
   // Modals & form state
   const [showAddSourceModal, setShowAddSourceModal] = useState(false);
   const [newSource, setNewSource] = useState({ name: '', url: '', type: 'HLS', channelId: '', priority: 1 });
@@ -141,12 +145,64 @@ export default function App() {
   };
 
   const handleDeleteSource = async (id: string, name: string) => {
-    if (!confirm(`Êtes-vous sûr de vouloir supprimer définitivement la source "${name}" ?`)) return;
+    if (
+      !confirm(
+        `Supprimer définitivement la source "${name}" ?\nSi la chaîne associée ne possède plus d'autre flux, elle sera également retirée du catalogue.`
+      )
+    )
+      return;
     try {
       await axios.delete(`/api/v1/sources/${id}`);
+      setSelectedSourceIds((prev) => prev.filter((i) => i !== id));
       loadData();
     } catch (e: any) {
       alert(`Erreur de suppression: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  // --- Multi-Selection Sources ---
+  const handleToggleSelectSource = (id: string) => {
+    setSelectedSourceIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
+  };
+
+  const handleToggleSelectAllSources = () => {
+    if (selectedSourceIds.length === sources.length) {
+      setSelectedSourceIds([]);
+    } else {
+      setSelectedSourceIds(sources.map((s) => s.id));
+    }
+  };
+
+  const handleBulkDeleteSources = async () => {
+    if (selectedSourceIds.length === 0) return;
+    if (
+      !confirm(
+        `Supprimer définitivement les ${selectedSourceIds.length} sources sélectionnées ?\nLes chaînes associées devenues sans sources seront automatiquement supprimées du catalogue.`
+      )
+    )
+      return;
+    try {
+      const res = await axios.post('/api/v1/sources/bulk-delete', { ids: selectedSourceIds });
+      alert(`${res.data.deletedCount} source(s) supprimée(s). Le catalogue a été actualisé.`);
+      setSelectedSourceIds([]);
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur de suppression groupée: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  const handleBulkCheckSources = async () => {
+    if (selectedSourceIds.length === 0) return;
+    try {
+      for (const id of selectedSourceIds) {
+        await axios.post(`/api/v1/sources/${id}/check`).catch(() => {});
+      }
+      alert(`Test de connectivité terminé pour les ${selectedSourceIds.length} sources.`);
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur: ${e.message}`);
     }
   };
 
@@ -167,9 +223,53 @@ export default function App() {
     if (!confirm(`Supprimer définitivement la chaîne "${name}" et toutes ses sources associées ?`)) return;
     try {
       await axios.delete(`/api/v1/admin/channels/${id}`);
+      setSelectedChannelIds((prev) => prev.filter((i) => i !== id));
       loadData();
     } catch (e: any) {
       alert(`Erreur de suppression: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  // --- Multi-Selection Channels ---
+  const handleToggleSelectChannel = (id: string) => {
+    setSelectedChannelIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
+  };
+
+  const handleToggleSelectAllChannels = () => {
+    if (selectedChannelIds.length === channels.length) {
+      setSelectedChannelIds([]);
+    } else {
+      setSelectedChannelIds(channels.map((c) => c.id));
+    }
+  };
+
+  const handleBulkDeleteChannels = async () => {
+    if (selectedChannelIds.length === 0) return;
+    if (
+      !confirm(
+        `Supprimer définitivement les ${selectedChannelIds.length} chaînes sélectionnées et leurs flux associés ?`
+      )
+    )
+      return;
+    try {
+      const res = await axios.post('/api/v1/admin/channels/bulk-delete', { ids: selectedChannelIds });
+      alert(`${res.data.deletedCount} chaîne(s) supprimée(s) du catalogue.`);
+      setSelectedChannelIds([]);
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur de suppression: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  const handleCleanupOrphans = async () => {
+    try {
+      const res = await axios.post('/api/v1/admin/channels/cleanup-orphans');
+      alert(`Nettoyage réussi : ${res.data.cleanedCount} chaîne(s) orpheline(s) sans flux ont été supprimées.`);
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur de nettoyage: ${e.response?.data?.message || e.message}`);
     }
   };
 
@@ -472,25 +572,78 @@ export default function App() {
         {/* TAB 2: SOURCES */}
         {activeTab === 'sources' && (
           <div className="space-y-6">
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => setShowAddSourceModal(true)}
-                className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/10"
-              >
-                <Plus className="w-4 h-4" /> Ajouter une source
-              </button>
-              <button
-                onClick={() => setM3uPreviewModal(true)}
-                className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-xs sm:text-sm flex items-center gap-2 border border-slate-700 transition-all"
-              >
-                <UploadCloud className="w-4 h-4" /> Importer Playlist M3U
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => setShowAddSourceModal(true)}
+                  className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/10"
+                >
+                  <Plus className="w-4 h-4" /> Ajouter une source
+                </button>
+                <button
+                  onClick={() => setM3uPreviewModal(true)}
+                  className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-xs sm:text-sm flex items-center gap-2 border border-slate-700 transition-all"
+                >
+                  <UploadCloud className="w-4 h-4" /> Importer Playlist M3U
+                </button>
+                {sources.length > 0 && (
+                  <button
+                    onClick={handleToggleSelectAllSources}
+                    className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700"
+                  >
+                    {selectedSourceIds.length === sources.length ? 'Désélectionner tout' : 'Tout sélectionner'}
+                  </button>
+                )}
+              </div>
+
+              <div className="text-xs text-slate-400">
+                Total : <strong className="text-slate-200">{sources.length}</strong> sources
+              </div>
             </div>
+
+            {/* Multi-selection Action Bar */}
+            {selectedSourceIds.length > 0 && (
+              <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                <div className="flex items-center gap-2 text-sm text-emerald-300 font-semibold">
+                  <CheckSquare className="w-4 h-4 text-emerald-400" />
+                  <span>{selectedSourceIds.length} source(s) sélectionnée(s) sur {sources.length}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleBulkCheckSources}
+                    className="py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-semibold flex items-center gap-1.5 transition-colors"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Tester ({selectedSourceIds.length})
+                  </button>
+                  <button
+                    onClick={handleBulkDeleteSources}
+                    className="py-1.5 px-3 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Supprimer la sélection ({selectedSourceIds.length})
+                  </button>
+                  <button
+                    onClick={() => setSelectedSourceIds([])}
+                    className="py-1.5 px-3 rounded-lg text-slate-400 hover:text-white text-xs"
+                  >
+                    Désélectionner
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/60">
               <table className="w-full text-left text-xs sm:text-sm text-slate-300">
                 <thead className="bg-slate-950/60 text-slate-400 uppercase text-[11px] font-semibold border-b border-slate-800">
                   <tr>
+                    <th className="p-4 w-10">
+                      <input
+                        type="checkbox"
+                        checked={sources.length > 0 && selectedSourceIds.length === sources.length}
+                        onChange={handleToggleSelectAllSources}
+                        className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500 cursor-pointer"
+                        title="Tout sélectionner / désélectionner"
+                      />
+                    </th>
                     <th className="p-4">Nom de la source</th>
                     <th className="p-4">Type</th>
                     <th className="p-4">Chaîne Associée</th>
@@ -501,56 +654,67 @@ export default function App() {
                 <tbody className="divide-y divide-slate-800/60">
                   {sources.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="p-8 text-center text-slate-500">
+                      <td colSpan={6} className="p-8 text-center text-slate-500">
                         Aucune source configurée. Cliquez sur "Ajouter une source" ou "Importer M3U".
                       </td>
                     </tr>
                   ) : (
-                    sources.map((src) => (
-                      <tr key={src.id} className="hover:bg-slate-800/30">
-                        <td className="p-4 font-semibold text-white">
-                          <div>{src.name}</div>
-                          <div className="text-xs text-slate-500 font-mono truncate max-w-xs">{src.url}</div>
-                        </td>
-                        <td className="p-4">
-                          <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-xs font-mono font-medium">
-                            {src.type}
-                          </span>
-                        </td>
-                        <td className="p-4">{src.channel?.name || <span className="text-slate-500">—</span>}</td>
-                        <td className="p-4">
-                          {src.status === 'ONLINE' ? (
-                            <span className="inline-flex items-center gap-1.5 text-emerald-400 text-xs font-semibold">
-                              <CheckCircle className="w-4 h-4" /> En ligne
+                    sources.map((src) => {
+                      const isSelected = selectedSourceIds.includes(src.id);
+                      return (
+                        <tr key={src.id} className={`hover:bg-slate-800/30 transition-colors ${isSelected ? 'bg-emerald-500/5' : ''}`}>
+                          <td className="p-4 w-10">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleSelectSource(src.id)}
+                              className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500 cursor-pointer"
+                            />
+                          </td>
+                          <td className="p-4 font-semibold text-white">
+                            <div>{src.name}</div>
+                            <div className="text-xs text-slate-500 font-mono truncate max-w-xs">{src.url}</div>
+                          </td>
+                          <td className="p-4">
+                            <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-xs font-mono font-medium">
+                              {src.type}
                             </span>
-                          ) : src.status === 'OFFLINE' ? (
-                            <span className="inline-flex items-center gap-1.5 text-red-400 text-xs font-semibold">
-                              <XCircle className="w-4 h-4" /> Hors ligne
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 text-xs font-medium">Non vérifié</span>
-                          )}
-                        </td>
-                        <td className="p-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => handleCheckSource(src.id)}
-                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 transition-colors"
-                              title="Tester la connectivité"
-                            >
-                              Tester
-                            </button>
-                            <button
-                              onClick={() => handleDeleteSource(src.id, src.name)}
-                              className="p-1.5 rounded-lg hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors"
-                              title="Supprimer la source"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                          </td>
+                          <td className="p-4">{src.channel?.name || <span className="text-slate-500">—</span>}</td>
+                          <td className="p-4">
+                            {src.status === 'ONLINE' ? (
+                              <span className="inline-flex items-center gap-1.5 text-emerald-400 text-xs font-semibold">
+                                <CheckCircle className="w-4 h-4" /> En ligne
+                              </span>
+                            ) : src.status === 'OFFLINE' ? (
+                              <span className="inline-flex items-center gap-1.5 text-red-400 text-xs font-semibold">
+                                <XCircle className="w-4 h-4" /> Hors ligne
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs font-medium">Non vérifié</span>
+                            )}
+                          </td>
+                          <td className="p-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => handleCheckSource(src.id)}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 transition-colors"
+                                title="Tester la connectivité"
+                              >
+                                Tester
+                              </button>
+                              <button
+                                onClick={() => handleDeleteSource(src.id, src.name)}
+                                className="p-1.5 rounded-lg hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors"
+                                title="Supprimer la source (actualise le catalogue)"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -559,67 +723,143 @@ export default function App() {
         )}
 
         {/* TAB 3: CHANNELS */}
-        {activeTab === 'channels' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => setShowAddChannelModal(true)}
-                className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/10"
-              >
-                <Plus className="w-4 h-4" /> Nouvelle Chaîne
-              </button>
-              <div className="text-xs text-slate-400">
-                Total : <strong className="text-slate-200">{channels.length}</strong> chaînes configurées
-              </div>
-            </div>
-
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {channels.map((ch) => (
-                <div key={ch.id} className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-3">
-                        {ch.logoUrl ? (
-                          <img src={ch.logoUrl} alt={ch.name} className="w-10 h-10 object-contain rounded-lg bg-slate-950 p-1 border border-slate-800" />
-                        ) : (
-                          <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 font-bold">
-                            {ch.name[0]}
-                          </div>
-                        )}
-                        <div>
-                          <div className="font-bold text-white text-base">{ch.name}</div>
-                          <div className="text-xs text-slate-400">{ch.category?.name || 'Général'} • {ch.country}</div>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteChannel(ch.id, ch.name)}
-                        className="p-1.5 rounded-lg hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-colors"
-                        title="Supprimer la chaîne"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="text-xs text-slate-400 mb-4">
-                      Sources associées : <span className="font-semibold text-slate-200">{ch.sources?.length || 0}</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                    <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${ch.isActive ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400'}`}>
-                      {ch.isActive ? 'Active' : 'Désactivée'}
-                    </span>
+        {activeTab === 'channels' && (() => {
+          const orphanChannels = channels.filter((c) => !c.sources || c.sources.length === 0);
+          return (
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={() => setShowAddChannelModal(true)}
+                    className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/10"
+                  >
+                    <Plus className="w-4 h-4" /> Nouvelle Chaîne
+                  </button>
+                  {channels.length > 0 && (
                     <button
-                      onClick={() => setTestPlayerUrl(`/api/v1/stream/${ch.id}/live.m3u8?token=admin_preview`)}
-                      className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-semibold"
+                      onClick={handleToggleSelectAllChannels}
+                      className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700"
                     >
-                      <Play className="w-3.5 h-3.5" /> Lire le flux
+                      {selectedChannelIds.length === channels.length ? 'Désélectionner tout' : 'Tout sélectionner'}
+                    </button>
+                  )}
+                </div>
+                <div className="text-xs text-slate-400">
+                  Total : <strong className="text-slate-200">{channels.length}</strong> chaînes configurées
+                </div>
+              </div>
+
+              {/* Orphan Channels Warning Banner */}
+              {orphanChannels.length > 0 && (
+                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs sm:text-sm text-amber-300">
+                    <strong>{orphanChannels.length} chaîne(s) orpheline(s)</strong> sans aucune source vidéo détectée(s) dans le catalogue.
+                  </div>
+                  <button
+                    onClick={handleCleanupOrphans}
+                    className="py-1.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold text-xs transition-all shadow-md"
+                  >
+                    Nettoyer ces {orphanChannels.length} chaînes orphelines
+                  </button>
+                </div>
+              )}
+
+              {/* Batch Action Bar */}
+              {selectedChannelIds.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-2 text-sm text-emerald-300 font-semibold">
+                    <CheckSquare className="w-4 h-4 text-emerald-400" />
+                    <span>{selectedChannelIds.length} chaîne(s) sélectionnée(s) sur {channels.length}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleBulkDeleteChannels}
+                      className="py-1.5 px-3 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Supprimer la sélection ({selectedChannelIds.length})
+                    </button>
+                    <button
+                      onClick={() => setSelectedChannelIds([])}
+                      className="py-1.5 px-3 rounded-lg text-slate-400 hover:text-white text-xs"
+                    >
+                      Désélectionner
                     </button>
                   </div>
                 </div>
-              ))}
+              )}
+
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {channels.map((ch) => {
+                  const isSelected = selectedChannelIds.includes(ch.id);
+                  const hasSources = ch.sources && ch.sources.length > 0;
+                  return (
+                    <div
+                      key={ch.id}
+                      className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${
+                        isSelected
+                          ? 'bg-slate-900 border-emerald-500/40 shadow-lg shadow-emerald-500/5'
+                          : 'bg-slate-900/60 border-slate-800'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-start justify-between mb-3 gap-2">
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleSelectChannel(ch.id)}
+                              className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500 cursor-pointer shrink-0 mt-0.5"
+                            />
+                            {ch.logoUrl ? (
+                              <img src={ch.logoUrl} alt={ch.name} className="w-10 h-10 object-contain rounded-lg bg-slate-950 p-1 border border-slate-800 shrink-0" />
+                            ) : (
+                              <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 font-bold shrink-0">
+                                {ch.name[0]}
+                              </div>
+                            )}
+                            <div>
+                              <div className="font-bold text-white text-base leading-snug">{ch.name}</div>
+                              <div className="text-xs text-slate-400">{ch.category?.name || 'Général'} • {ch.country}</div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteChannel(ch.id, ch.name)}
+                            className="p-1.5 rounded-lg hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-colors shrink-0"
+                            title="Supprimer la chaîne"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="text-xs text-slate-400 mb-4 pl-7">
+                          Sources associées :{' '}
+                          <span className={`font-semibold ${hasSources ? 'text-slate-200' : 'text-amber-400'}`}>
+                            {ch.sources?.length || 0} {!hasSources && '(Orpheline)'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${ch.isActive ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400'}`}>
+                          {ch.isActive ? 'Active' : 'Désactivée'}
+                        </span>
+                        {hasSources ? (
+                          <button
+                            onClick={() => setTestPlayerUrl(`/api/v1/stream/${ch.id}/live.m3u8?token=admin_preview`)}
+                            className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-semibold"
+                          >
+                            <Play className="w-3.5 h-3.5" /> Lire le flux
+                          </button>
+                        ) : (
+                          <span className="text-slate-500 italic">Aucun flux</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* TAB 4: SHARES & M3U */}
         {activeTab === 'shares' && (

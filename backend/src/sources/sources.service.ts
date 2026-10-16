@@ -56,7 +56,56 @@ export class SourcesService {
   }
 
   async delete(id: string) {
-    return this.prisma.source.delete({ where: { id } });
+    const source = await this.prisma.source.findUnique({
+      where: { id },
+      select: { channelId: true },
+    });
+
+    await this.prisma.source.delete({ where: { id } });
+
+    if (source?.channelId) {
+      const remaining = await this.prisma.source.count({
+        where: { channelId: source.channelId },
+      });
+      if (remaining === 0) {
+        await this.prisma.channel.delete({
+          where: { id: source.channelId },
+        }).catch(() => {});
+      }
+    }
+
+    return { success: true };
+  }
+
+  async deleteMany(ids: string[]) {
+    if (!ids || ids.length === 0) return { deletedCount: 0 };
+
+    const sources = await this.prisma.source.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, channelId: true },
+    });
+
+    const channelIds = Array.from(
+      new Set(sources.map((s) => s.channelId).filter((cid): cid is string => Boolean(cid)))
+    );
+
+    const res = await this.prisma.source.deleteMany({
+      where: { id: { in: ids } },
+    });
+
+    // Nettoyer les chaînes orphelines sans aucune source restante
+    for (const channelId of channelIds) {
+      const remaining = await this.prisma.source.count({
+        where: { channelId },
+      });
+      if (remaining === 0) {
+        await this.prisma.channel.delete({
+          where: { id: channelId },
+        }).catch(() => {});
+      }
+    }
+
+    return { deletedCount: res.count };
   }
 
   async checkAvailability(id: string) {
