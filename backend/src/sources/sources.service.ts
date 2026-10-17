@@ -159,7 +159,36 @@ export class SourcesService {
     }
   }
 
-  parseM3UPreview(m3uContent: string) {
+  async parseM3UPreview(input: { content?: string; url?: string } | string) {
+    let m3uContent = '';
+
+    if (typeof input === 'string') {
+      m3uContent = input;
+    } else if (input && typeof input === 'object') {
+      if (input.url && input.url.trim()) {
+        const safeUrl = this.security.validateStreamUrl(input.url.trim());
+        try {
+          const res = await axios.get(safeUrl, {
+            timeout: 25000,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Server/1.0',
+            },
+            maxContentLength: 50 * 1024 * 1024,
+            responseType: 'text',
+          });
+          m3uContent = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+        } catch (fetchErr: any) {
+          throw new Error(`Impossible de télécharger la playlist M3U depuis l'URL : ${fetchErr.message}`);
+        }
+      } else {
+        m3uContent = input.content || '';
+      }
+    }
+
+    if (!m3uContent || !m3uContent.trim()) {
+      return [];
+    }
+
     const lines = m3uContent.split(/\r?\n/);
     const items: any[] = [];
     let currentItem: any = null;

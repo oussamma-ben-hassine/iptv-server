@@ -68,9 +68,9 @@ export class SourcesController {
   @Post('m3u/preview')
   @UseGuards(AuthGuard)
   @Roles('ADMIN')
-  @ApiOperation({ summary: 'Prévisualiser une playlist M3U brute avant import' })
-  previewM3U(@Body('content') content: string) {
-    return this.sourcesService.parseM3UPreview(content);
+  @ApiOperation({ summary: 'Prévisualiser une playlist M3U brute ou depuis une URL avant import' })
+  previewM3U(@Body() body: any) {
+    return this.sourcesService.parseM3UPreview(body);
   }
 
   @Post('m3u/import')
