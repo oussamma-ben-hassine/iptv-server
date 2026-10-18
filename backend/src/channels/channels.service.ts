@@ -54,6 +54,7 @@ export class ChannelsService {
         },
       },
       orderBy: { sortOrder: 'asc' },
+      take: 2000,
     });
 
     return channels.map((ch, index) => {
@@ -96,6 +97,7 @@ export class ChannelsService {
           },
         },
         orderBy: { sortOrder: 'asc' },
+        take: 2000,
       });
     }
 

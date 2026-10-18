@@ -17,6 +17,7 @@ export class SourcesService {
       return this.prisma.source.findMany({
         include: { channel: true },
         orderBy: { createdAt: 'desc' },
+        take: 2000,
       });
     }
 
