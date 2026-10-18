@@ -9,7 +9,7 @@ export class ChannelsService {
     return this.prisma;
   }
 
-  async findAllPublic(token?: string) {
+  async findAllPublic(token?: string, query?: { page?: number; limit?: number }) {
     const host = (process.env.APP_URL || 'https://iptv.oussamma.tn').replace(/\/$/, '');
 
     let targetToken = token;
