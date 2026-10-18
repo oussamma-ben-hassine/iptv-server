@@ -89,7 +89,9 @@ services:
 
 volumes:
   postgres-data:
+    name: iptv_production_postgres_permanent
   vod-storage:
+    name: iptv_production_vod_storage_permanent
 
 
 networks:

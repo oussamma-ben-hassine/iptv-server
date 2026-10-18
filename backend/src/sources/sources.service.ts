@@ -12,11 +12,43 @@ export class SourcesService {
     private readonly security: SecurityService,
   ) {}
 
-  async findAll() {
-    return this.prisma.source.findMany({
-      include: { channel: true },
-      orderBy: { createdAt: 'desc' },
-    });
+  async findAll(query?: { page?: number; limit?: number; search?: string }) {
+    if (!query?.page && !query?.limit && !query?.search) {
+      return this.prisma.source.findMany({
+        include: { channel: true },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Number(query.limit) || 50);
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (query.search && typeof query.search === 'string' && query.search.trim()) {
+      where.OR = [
+        { name: { contains: query.search.trim(), mode: 'insensitive' } },
+        { url: { contains: query.search.trim(), mode: 'insensitive' } },
+      ];
+    }
+
+    const [total, data] = await Promise.all([
+      this.prisma.source.count({ where }),
+      this.prisma.source.findMany({
+        where,
+        include: { channel: true },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: string) {

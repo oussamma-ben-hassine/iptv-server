@@ -86,16 +86,56 @@ export class ChannelsService {
     });
   }
 
-  async findAllAdmin() {
-    return this.prisma.channel.findMany({
-      include: {
-        category: true,
-        sources: {
-          orderBy: { priority: 'asc' },
+  async findAllAdmin(query?: { page?: number; limit?: number; search?: string; categoryId?: string }) {
+    if (!query?.page && !query?.limit && !query?.search && !query?.categoryId) {
+      return this.prisma.channel.findMany({
+        include: {
+          category: true,
+          sources: {
+            orderBy: { priority: 'asc' },
+          },
         },
-      },
-      orderBy: { sortOrder: 'asc' },
-    });
+        orderBy: { sortOrder: 'asc' },
+      });
+    }
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Number(query.limit) || 50);
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (query.search && typeof query.search === 'string' && query.search.trim()) {
+      where.OR = [
+        { name: { contains: query.search.trim(), mode: 'insensitive' } },
+        { slug: { contains: query.search.trim(), mode: 'insensitive' } },
+      ];
+    }
+    if (query.categoryId) {
+      where.categoryId = query.categoryId;
+    }
+
+    const [total, data] = await Promise.all([
+      this.prisma.channel.count({ where }),
+      this.prisma.channel.findMany({
+        where,
+        include: {
+          category: true,
+          sources: {
+            orderBy: { priority: 'asc' },
+          },
+        },
+        orderBy: { sortOrder: 'asc' },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: string) {

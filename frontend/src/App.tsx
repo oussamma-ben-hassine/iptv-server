@@ -153,6 +153,23 @@ export default function App() {
   const [selectedM3uItems, setSelectedM3uItems] = useState<number[]>([]);
   const [testPlayerUrl, setTestPlayerUrl] = useState<string | null>(null);
 
+  // M3U Import Resume & Retries
+  const [importPaused, setImportPaused] = useState(false);
+  const [importErrorMsg, setImportErrorMsg] = useState<string | null>(null);
+  const [importCurrentIndex, setImportCurrentIndex] = useState(0);
+  const [importTotalSaved, setImportTotalSaved] = useState(0);
+  const [toImportList, setToImportList] = useState<any[]>([]);
+
+  // Catalogue Pagination & Search
+  const [channelPage, setChannelPage] = useState(1);
+  const [channelSearch, setChannelSearch] = useState('');
+  const [channelCategoryFilter, setChannelCategoryFilter] = useState('');
+  const CHANNELS_PER_PAGE = 36;
+
+  const [sourcePage, setSourcePage] = useState(1);
+  const [sourceSearch, setSourceSearch] = useState('');
+  const SOURCES_PER_PAGE = 50;
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -188,8 +205,8 @@ export default function App() {
       ]);
 
       if (statsRes.data) setStats(statsRes.data);
-      if (chRes.data) setChannels(chRes.data);
-      if (srcRes.data) setSources(srcRes.data);
+      if (chRes.data) setChannels(Array.isArray(chRes.data) ? chRes.data : (chRes.data.data || []));
+      if (srcRes.data) setSources(Array.isArray(srcRes.data) ? srcRes.data : (srcRes.data.data || []));
       if (shRes.data) setShares(shRes.data);
       if (catRes.data) setCategories(catRes.data);
       if (analyticsRes.data) setAnalytics(analyticsRes.data);
@@ -932,48 +949,97 @@ export default function App() {
     setM3uImportTab('text');
   };
 
+  const postChunkWithRetry = async (chunk: any[], maxRetries = 3) => {
+    let attempt = 0;
+    while (attempt < maxRetries) {
+      try {
+        return await axios.post('/api/v1/sources/m3u/import', { items: chunk });
+      } catch (err: any) {
+        attempt++;
+        if (attempt >= maxRetries) throw err;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+  };
+
+  const runImportLoop = async (startIndex: number, itemsList: any[], initialSaved: number) => {
+    setIsImporting(true);
+    setImportPaused(false);
+    setImportErrorMsg(null);
+    importCancelledRef.current = false;
+    const batchSize = 100;
+    let saved = initialSaved;
+
+    for (let i = startIndex; i < itemsList.length; i += batchSize) {
+      if (importCancelledRef.current) {
+        setImportPaused(true);
+        setImportCurrentIndex(i);
+        setImportTotalSaved(saved);
+        setIsImporting(false);
+        return;
+      }
+
+      const chunk = itemsList.slice(i, i + batchSize);
+      try {
+        const res = await postChunkWithRetry(chunk, 3);
+        saved += (res?.data?.importedCount || 0);
+        setImportTotalSaved(saved);
+
+        const currentCount = Math.min(itemsList.length, i + chunk.length);
+        const percent = Math.round((currentCount / itemsList.length) * 100);
+        setImportProgress({ current: currentCount, total: itemsList.length, percent });
+        setImportCurrentIndex(currentCount);
+      } catch (err: any) {
+        setImportPaused(true);
+        setImportCurrentIndex(i);
+        setImportTotalSaved(saved);
+        setImportErrorMsg(`Coupure réseau survenue au lot ${Math.ceil((i + 1) / batchSize)}. ${saved} chaînes ont déjà été enregistrées avec succès.`);
+        setIsImporting(false);
+        return;
+      }
+    }
+
+    alert(`Import terminé avec succès : ${saved} chaînes importées.`);
+    setM3uPreviewModal(false);
+    setM3uRawText('');
+    setM3uFile(null);
+    setM3uUrlInput('');
+    setM3uParsedItems([]);
+    setToImportList([]);
+    setIsImporting(false);
+    setImportPaused(false);
+    setImportProgress(null);
+    loadData();
+  };
+
   const handleConfirmImportM3U = async () => {
     const toImport = m3uParsedItems.filter((_, idx) => selectedM3uItems.includes(idx));
     if (toImport.length === 0) return;
 
-    try {
-      setIsImporting(true);
-      importCancelledRef.current = false;
-      const batchSize = 100;
-      let totalImported = 0;
-      setImportProgress({ current: 0, total: toImport.length, percent: 0 });
+    setToImportList(toImport);
+    setImportCurrentIndex(0);
+    setImportTotalSaved(0);
+    setImportProgress({ current: 0, total: toImport.length, percent: 0 });
+    await runImportLoop(0, toImport, 0);
+  };
 
-      for (let i = 0; i < toImport.length; i += batchSize) {
-        if (importCancelledRef.current) {
-          alert(`Importation arrêtée par l'utilisateur. ${totalImported} chaînes ont été importées avec succès.`);
-          break;
-        }
+  const handleResumeImport = async () => {
+    if (toImportList.length === 0) return;
+    await runImportLoop(importCurrentIndex, toImportList, importTotalSaved);
+  };
 
-        const chunk = toImport.slice(i, i + batchSize);
-        const res = await axios.post('/api/v1/sources/m3u/import', { items: chunk });
-        totalImported += (res.data?.importedCount || 0);
-
-        const currentCount = Math.min(toImport.length, i + chunk.length);
-        const percent = Math.round((currentCount / toImport.length) * 100);
-        setImportProgress({ current: currentCount, total: toImport.length, percent });
-      }
-
-      if (!importCancelledRef.current) {
-        alert(`Import terminé avec succès : ${totalImported} chaînes importées.`);
-      }
-
-      setM3uPreviewModal(false);
-      setM3uRawText('');
-      setM3uFile(null);
-      setM3uUrlInput('');
-      setM3uParsedItems([]);
-      loadData();
-    } catch (e: any) {
-      alert(`Erreur d'import: ${e.response?.data?.message || e.message}`);
-    } finally {
-      setIsImporting(false);
-      setImportProgress(null);
-    }
+  const handleFinishEarlyImport = () => {
+    alert(`Import clôturé. ${importTotalSaved} chaînes ont été importées et conservées.`);
+    setM3uPreviewModal(false);
+    setM3uRawText('');
+    setM3uFile(null);
+    setM3uUrlInput('');
+    setM3uParsedItems([]);
+    setToImportList([]);
+    setIsImporting(false);
+    setImportPaused(false);
+    setImportProgress(null);
+    loadData();
   };
 
   const copyToClipboard = (text: string) => {
@@ -1328,161 +1394,258 @@ export default function App() {
         )}
 
         {/* TAB 2: SOURCES */}
-        {activeTab === 'sources' && (
-          <div className="space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  onClick={() => setShowAddSourceModal(true)}
-                  className="py-2.5 px-4 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs"
-                >
-                  <Plus className="w-4 h-4" /> Ajouter une source
-                </button>
-                <button
-                  onClick={() => setM3uPreviewModal(true)}
-                  className="py-2.5 px-4 rounded-full bg-white hover:bg-gray-50 text-gray-700 font-medium text-xs sm:text-sm flex items-center gap-2 border border-gray-300 shadow-xs transition-all"
-                >
-                  <UploadCloud className="w-4 h-4 text-blue-600" /> Importer Playlist M3U
-                </button>
-                {sources.length > 0 && (
-                  <button
-                    onClick={handleToggleSelectAllSources}
-                    className="py-2.5 px-3.5 rounded-full bg-white hover:bg-gray-50 text-gray-700 text-xs font-medium border border-gray-300 shadow-xs transition-all"
-                  >
-                    {selectedSourceIds.length === sources.length ? 'Désélectionner tout' : 'Tout sélectionner'}
-                  </button>
-                )}
-              </div>
+        {activeTab === 'sources' && (() => {
+          const filteredSources = sources.filter((src) => {
+            if (!sourceSearch.trim()) return true;
+            const q = sourceSearch.toLowerCase();
+            return (
+              src.name?.toLowerCase().includes(q) ||
+              src.url?.toLowerCase().includes(q) ||
+              src.channel?.name?.toLowerCase().includes(q)
+            );
+          });
+          const totalSourcePages = Math.max(1, Math.ceil(filteredSources.length / SOURCES_PER_PAGE));
+          const currentSourcePage = Math.min(sourcePage, totalSourcePages);
+          const pagedSources = filteredSources.slice(
+            (currentSourcePage - 1) * SOURCES_PER_PAGE,
+            currentSourcePage * SOURCES_PER_PAGE
+          );
 
-              <div className="text-xs text-gray-500">
-                Total : <strong className="text-gray-900">{sources.length}</strong> sources
-              </div>
-            </div>
-
-            {/* Multi-selection Action Bar */}
-            {selectedSourceIds.length > 0 && (
-              <div className="p-3.5 rounded-2xl bg-blue-50/80 border border-blue-200 flex flex-wrap items-center justify-between gap-3 shadow-xs">
-                <div className="flex items-center gap-2 text-sm text-blue-900 font-semibold">
-                  <CheckSquare className="w-4 h-4 text-blue-600" />
-                  <span>{selectedSourceIds.length} source(s) sélectionnée(s) sur {sources.length}</span>
-                </div>
-                <div className="flex items-center gap-2">
+          return (
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <button
-                    onClick={handleBulkCheckSources}
-                    className="py-1.5 px-3 rounded-full bg-white hover:bg-gray-50 text-xs text-gray-700 border border-gray-300 font-medium flex items-center gap-1.5 shadow-xs transition-colors"
+                    onClick={() => setShowAddSourceModal(true)}
+                    className="py-2.5 px-4 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" /> Tester ({selectedSourceIds.length})
+                    <Plus className="w-4 h-4" /> Ajouter une source
                   </button>
                   <button
-                    onClick={handleBulkDeleteSources}
-                    className="py-1.5 px-3 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                    onClick={() => setM3uPreviewModal(true)}
+                    className="py-2.5 px-4 rounded-full bg-white hover:bg-gray-50 text-gray-700 font-medium text-xs sm:text-sm flex items-center gap-2 border border-gray-300 shadow-xs transition-all"
                   >
-                    <Trash2 className="w-3.5 h-3.5" /> Supprimer la sélection ({selectedSourceIds.length})
+                    <UploadCloud className="w-4 h-4 text-blue-600" /> Importer Playlist M3U
                   </button>
-                  <button
-                    onClick={() => setSelectedSourceIds([])}
-                    className="py-1.5 px-3 rounded-full text-gray-600 hover:text-gray-900 text-xs font-medium"
-                  >
-                    Désélectionner
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-xs">
-              <table className="w-full text-left text-xs sm:text-sm text-gray-700">
-                <thead className="bg-gray-50 text-gray-600 uppercase text-[11px] font-semibold border-b border-gray-200">
-                  <tr>
-                    <th className="p-4 w-10">
-                      <input
-                        type="checkbox"
-                        checked={sources.length > 0 && selectedSourceIds.length === sources.length}
-                        onChange={handleToggleSelectAllSources}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                        title="Tout sélectionner / désélectionner"
-                      />
-                    </th>
-                    <th className="p-4">Nom de la source</th>
-                    <th className="p-4">Type</th>
-                    <th className="p-4">Chaîne Associée</th>
-                    <th className="p-4">Statut</th>
-                    <th className="p-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 bg-white">
-                  {sources.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-8 text-center text-gray-500">
-                        Aucune source configurée. Cliquez sur "Ajouter une source" ou "Importer M3U".
-                      </td>
-                    </tr>
-                  ) : (
-                    sources.map((src) => {
-                      const isSelected = selectedSourceIds.includes(src.id);
-                      return (
-                        <tr key={src.id} className={`hover:bg-blue-50/40 transition-colors ${isSelected ? 'bg-blue-50/30' : ''}`}>
-                          <td className="p-4 w-10">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => handleToggleSelectSource(src.id)}
-                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                            />
-                          </td>
-                          <td className="p-4 font-semibold text-gray-900">
-                            <div>{src.name}</div>
-                            <div className="text-xs text-gray-400 font-mono truncate max-w-xs">{src.url}</div>
-                          </td>
-                          <td className="p-4">
-                            <span className="px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs font-mono font-medium border border-gray-200">
-                              {src.type}
-                            </span>
-                          </td>
-                          <td className="p-4">{src.channel?.name || <span className="text-gray-400">—</span>}</td>
-                          <td className="p-4">
-                            {src.status === 'ONLINE' ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold">
-                                <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> En ligne
-                              </span>
-                            ) : src.status === 'OFFLINE' ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-semibold">
-                                <XCircle className="w-3.5 h-3.5 text-rose-600" /> Hors ligne
-                              </span>
-                            ) : (
-                              <span className="text-gray-400 text-xs font-medium">Non vérifié</span>
-                            )}
-                          </td>
-                          <td className="p-4 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <button
-                                onClick={() => handleCheckSource(src.id)}
-                                className="px-3 py-1.5 rounded-full bg-white hover:bg-gray-50 text-xs text-gray-700 border border-gray-300 shadow-xs font-medium transition-colors"
-                                title="Tester la connectivité"
-                              >
-                                Tester
-                              </button>
-                              <button
-                                onClick={() => handleDeleteSource(src.id, src.name)}
-                                className="p-1.5 rounded-full hover:bg-rose-50 text-gray-400 hover:text-rose-600 transition-colors"
-                                title="Supprimer la source (actualise le catalogue)"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
+                  {filteredSources.length > 0 && (
+                    <button
+                      onClick={() => {
+                        if (selectedSourceIds.length === filteredSources.length) setSelectedSourceIds([]);
+                        else setSelectedSourceIds(filteredSources.map((s) => s.id));
+                      }}
+                      className="py-2.5 px-3.5 rounded-full bg-white hover:bg-gray-50 text-gray-700 text-xs font-medium border border-gray-300 shadow-xs transition-all"
+                    >
+                      {selectedSourceIds.length === filteredSources.length ? 'Désélectionner tout' : 'Tout sélectionner'}
+                    </button>
                   )}
-                </tbody>
-              </table>
+                </div>
+
+                <div className="text-xs text-gray-500">
+                  Total : <strong className="text-gray-900">{sources.length}</strong> sources {sourceSearch && `(${filteredSources.length} trouvée(s))`}
+                </div>
+              </div>
+
+              {/* Search Bar for Sources */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Rechercher une source par nom, URL, ou chaîne associée..."
+                  value={sourceSearch}
+                  onChange={(e) => {
+                    setSourceSearch(e.target.value);
+                    setSourcePage(1);
+                  }}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white border border-gray-300 text-xs sm:text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+
+              {/* Multi-selection Action Bar */}
+              {selectedSourceIds.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-blue-50/80 border border-blue-200 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-2 text-sm text-blue-900 font-semibold">
+                    <CheckSquare className="w-4 h-4 text-blue-600" />
+                    <span>{selectedSourceIds.length} source(s) sélectionnée(s) sur {filteredSources.length}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleBulkCheckSources}
+                      className="py-1.5 px-3 rounded-full bg-white hover:bg-gray-50 text-xs text-gray-700 border border-gray-300 font-medium flex items-center gap-1.5 shadow-xs transition-colors"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" /> Tester ({selectedSourceIds.length})
+                    </button>
+                    <button
+                      onClick={handleBulkDeleteSources}
+                      className="py-1.5 px-3 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Supprimer la sélection ({selectedSourceIds.length})
+                    </button>
+                    <button
+                      onClick={() => setSelectedSourceIds([])}
+                      className="py-1.5 px-3 rounded-full text-gray-600 hover:text-gray-900 text-xs font-medium"
+                    >
+                      Désélectionner
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-xs">
+                <table className="w-full text-left text-xs sm:text-sm text-gray-700">
+                  <thead className="bg-gray-50 text-gray-600 uppercase text-[11px] font-semibold border-b border-gray-200">
+                    <tr>
+                      <th className="p-4 w-10">
+                        <input
+                          type="checkbox"
+                          checked={filteredSources.length > 0 && selectedSourceIds.length === filteredSources.length}
+                          onChange={() => {
+                            if (selectedSourceIds.length === filteredSources.length) setSelectedSourceIds([]);
+                            else setSelectedSourceIds(filteredSources.map((s) => s.id));
+                          }}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          title="Tout sélectionner / désélectionner"
+                        />
+                      </th>
+                      <th className="p-4">Nom de la source</th>
+                      <th className="p-4">Type</th>
+                      <th className="p-4">Chaîne Associée</th>
+                      <th className="p-4">Statut</th>
+                      <th className="p-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {filteredSources.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-8 text-center text-gray-500">
+                          {sourceSearch ? 'Aucune source ne correspond à votre recherche.' : 'Aucune source configurée. Cliquez sur "Ajouter une source" ou "Importer M3U".'}
+                        </td>
+                      </tr>
+                    ) : (
+                      pagedSources.map((src) => {
+                        const isSelected = selectedSourceIds.includes(src.id);
+                        return (
+                          <tr key={src.id} className={`hover:bg-blue-50/40 transition-colors ${isSelected ? 'bg-blue-50/30' : ''}`}>
+                            <td className="p-4 w-10">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleToggleSelectSource(src.id)}
+                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                              />
+                            </td>
+                            <td className="p-4 font-semibold text-gray-900">
+                              <div>{src.name}</div>
+                              <div className="text-xs text-gray-400 font-mono truncate max-w-xs">{src.url}</div>
+                            </td>
+                            <td className="p-4">
+                              <span className="px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs font-mono font-medium border border-gray-200">
+                                {src.type}
+                              </span>
+                            </td>
+                            <td className="p-4">{src.channel?.name || <span className="text-gray-400">—</span>}</td>
+                            <td className="p-4">
+                              {src.status === 'ONLINE' ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold">
+                                  <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> En ligne
+                                </span>
+                              ) : src.status === 'OFFLINE' ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-semibold">
+                                  <XCircle className="w-3.5 h-3.5 text-rose-600" /> Hors ligne
+                                </span>
+                              ) : (
+                                <span className="text-gray-400 text-xs font-medium">Non vérifié</span>
+                              )}
+                            </td>
+                            <td className="p-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => handleCheckSource(src.id)}
+                                  className="px-3 py-1.5 rounded-full bg-white hover:bg-gray-50 text-xs text-gray-700 border border-gray-300 shadow-xs font-medium transition-colors"
+                                  title="Tester la connectivité"
+                                >
+                                  Tester
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteSource(src.id, src.name)}
+                                  className="p-1.5 rounded-full hover:bg-rose-50 text-gray-400 hover:text-rose-600 transition-colors"
+                                  title="Supprimer la source (actualise le catalogue)"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Sources Pagination Controls */}
+              {totalSourcePages > 1 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-gray-200 text-xs text-gray-600">
+                  <div>
+                    Affichage de {((currentSourcePage - 1) * SOURCES_PER_PAGE) + 1} à {Math.min(currentSourcePage * SOURCES_PER_PAGE, filteredSources.length)} sur {filteredSources.length} sources
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      disabled={currentSourcePage <= 1}
+                      onClick={() => setSourcePage(1)}
+                      className="px-2.5 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium transition-colors"
+                    >
+                      « 1
+                    </button>
+                    <button
+                      disabled={currentSourcePage <= 1}
+                      onClick={() => setSourcePage((p) => Math.max(1, p - 1))}
+                      className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium transition-colors"
+                    >
+                      Précédent
+                    </button>
+                    <span className="px-3 py-1.5 font-bold text-gray-900 bg-gray-100 rounded-lg">
+                      {currentSourcePage} / {totalSourcePages}
+                    </span>
+                    <button
+                      disabled={currentSourcePage >= totalSourcePages}
+                      onClick={() => setSourcePage((p) => Math.min(totalSourcePages, p + 1))}
+                      className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium transition-colors"
+                    >
+                      Suivant
+                    </button>
+                    <button
+                      disabled={currentSourcePage >= totalSourcePages}
+                      onClick={() => setSourcePage(totalSourcePages)}
+                      className="px-2.5 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium transition-colors"
+                    >
+                      {totalSourcePages} »
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* TAB 3: CHANNELS */}
         {activeTab === 'channels' && (() => {
           const orphanChannels = channels.filter((c) => !c.sources || c.sources.length === 0);
+          const filteredChannels = channels.filter((ch) => {
+            const matchesSearch =
+              !channelSearch.trim() ||
+              ch.name.toLowerCase().includes(channelSearch.toLowerCase()) ||
+              (ch.category?.name && ch.category.name.toLowerCase().includes(channelSearch.toLowerCase())) ||
+              (ch.country && ch.country.toLowerCase().includes(channelSearch.toLowerCase()));
+            const matchesCat = !channelCategoryFilter || ch.categoryId === channelCategoryFilter;
+            return matchesSearch && matchesCat;
+          });
+          const totalChannelPages = Math.max(1, Math.ceil(filteredChannels.length / CHANNELS_PER_PAGE));
+          const currentChannelPage = Math.min(channelPage, totalChannelPages);
+          const pagedChannels = filteredChannels.slice(
+            (currentChannelPage - 1) * CHANNELS_PER_PAGE,
+            currentChannelPage * CHANNELS_PER_PAGE
+          );
+
           return (
             <div className="space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1503,17 +1666,54 @@ export default function App() {
                   >
                     <Sparkles className="w-4 h-4 text-purple-600" /> Assistant IA (LiteLLM)
                   </button>
-                  {channels.length > 0 && (
+                  {filteredChannels.length > 0 && (
                     <button
-                      onClick={handleToggleSelectAllChannels}
+                      onClick={() => {
+                        if (selectedChannelIds.length === filteredChannels.length) setSelectedChannelIds([]);
+                        else setSelectedChannelIds(filteredChannels.map((c) => c.id));
+                      }}
                       className="py-2.5 px-3.5 rounded-full bg-white hover:bg-gray-50 text-gray-700 text-xs font-medium border border-gray-300 shadow-xs transition-all"
                     >
-                      {selectedChannelIds.length === channels.length ? 'Désélectionner tout' : 'Tout sélectionner'}
+                      {selectedChannelIds.length === filteredChannels.length ? 'Désélectionner tout' : 'Tout sélectionner'}
                     </button>
                   )}
                 </div>
                 <div className="text-xs text-gray-500">
-                  Total : <strong className="text-gray-900">{channels.length}</strong> chaînes configurées
+                  Total : <strong className="text-gray-900">{channels.length}</strong> chaînes configurées {channelSearch || channelCategoryFilter ? `(${filteredChannels.length} trouvée(s))` : ''}
+                </div>
+              </div>
+
+              {/* Search & Category Filter for Channels */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Rechercher une chaîne par nom, pays ou catégorie..."
+                    value={channelSearch}
+                    onChange={(e) => {
+                      setChannelSearch(e.target.value);
+                      setChannelPage(1);
+                    }}
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white border border-gray-300 text-xs sm:text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+                <div className="w-full sm:w-64">
+                  <select
+                    value={channelCategoryFilter}
+                    onChange={(e) => {
+                      setChannelCategoryFilter(e.target.value);
+                      setChannelPage(1);
+                    }}
+                    className="w-full p-2.5 rounded-xl bg-white border border-gray-300 text-xs sm:text-sm text-gray-700 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="">Toutes les catégories ({categories.length})</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -1537,7 +1737,7 @@ export default function App() {
                 <div className="p-3.5 rounded-2xl bg-blue-50/80 border border-blue-200 flex flex-wrap items-center justify-between gap-3 shadow-xs">
                   <div className="flex items-center gap-2 text-sm text-blue-900 font-semibold">
                     <CheckSquare className="w-4 h-4 text-blue-600" />
-                    <span>{selectedChannelIds.length} chaîne(s) sélectionnée(s) sur {channels.length}</span>
+                    <span>{selectedChannelIds.length} chaîne(s) sélectionnée(s) sur {filteredChannels.length}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -1556,75 +1756,134 @@ export default function App() {
                 </div>
               )}
 
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {channels.map((ch) => {
-                  const isSelected = selectedChannelIds.includes(ch.id);
-                  const hasSources = ch.sources && ch.sources.length > 0;
-                  return (
-                    <div
-                      key={ch.id}
-                      className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${
-                        isSelected
-                          ? 'bg-blue-50/30 border-blue-400 ring-2 ring-blue-500/20 shadow-sm'
-                          : 'bg-white border-gray-200/90 shadow-xs hover:shadow-md'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-start justify-between mb-3 gap-2">
-                          <div className="flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => handleToggleSelectChannel(ch.id)}
-                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer shrink-0 mt-0.5"
-                            />
-                            {ch.logoUrl ? (
-                              <img src={ch.logoUrl} alt={ch.name} className="w-10 h-10 object-contain rounded-xl bg-gray-50 p-1 border border-gray-200 shrink-0" />
-                            ) : (
-                              <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-500 font-bold shrink-0">
-                                {ch.name[0]}
+              {filteredChannels.length === 0 ? (
+                <div className="p-12 text-center bg-white rounded-2xl border border-gray-200 text-gray-500">
+                  {channelSearch || channelCategoryFilter
+                    ? 'Aucune chaîne ne correspond à vos filtres de recherche.'
+                    : 'Aucune chaîne configurée. Cliquez sur "Nouvelle Chaîne" ou importez une playlist M3U.'}
+                </div>
+              ) : (
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {pagedChannels.map((ch) => {
+                    const isSelected = selectedChannelIds.includes(ch.id);
+                    const hasSources = ch.sources && ch.sources.length > 0;
+                    return (
+                      <div
+                        key={ch.id}
+                        className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-blue-50/30 border-blue-400 ring-2 ring-blue-500/20 shadow-sm'
+                            : 'bg-white border-gray-200/90 shadow-xs hover:shadow-md'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-start justify-between mb-3 gap-2">
+                            <div className="flex items-center gap-3">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleToggleSelectChannel(ch.id)}
+                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer shrink-0 mt-0.5"
+                              />
+                              {ch.logoUrl ? (
+                                <img
+                                  src={ch.logoUrl}
+                                  alt={ch.name}
+                                  loading="lazy"
+                                  className="w-10 h-10 object-contain rounded-xl bg-gray-50 p-1 border border-gray-200 shrink-0"
+                                  onError={(e) => {
+                                    // Fallback to placeholder if broken image
+                                    (e.target as HTMLElement).style.display = 'none';
+                                  }}
+                                />
+                              ) : (
+                                <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-500 font-bold shrink-0">
+                                  {ch.name[0]}
+                                </div>
+                              )}
+                              <div>
+                                <div className="font-bold text-gray-900 text-base leading-snug">{ch.name}</div>
+                                <div className="text-xs text-gray-500">{ch.category?.name || 'Général'} • {ch.country}</div>
                               </div>
-                            )}
-                            <div>
-                              <div className="font-bold text-gray-900 text-base leading-snug">{ch.name}</div>
-                              <div className="text-xs text-gray-500">{ch.category?.name || 'Général'} • {ch.country}</div>
                             </div>
+                            <button
+                              onClick={() => handleDeleteChannel(ch.id, ch.name)}
+                              className="p-1.5 rounded-full hover:bg-rose-50 text-gray-400 hover:text-rose-600 transition-colors shrink-0"
+                              title="Supprimer la chaîne"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
-                          <button
-                            onClick={() => handleDeleteChannel(ch.id, ch.name)}
-                            className="p-1.5 rounded-full hover:bg-rose-50 text-gray-400 hover:text-rose-600 transition-colors shrink-0"
-                            title="Supprimer la chaîne"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <div className="text-xs text-gray-500 mb-4 pl-7">
+                            Sources associées :{' '}
+                            <span className={`font-semibold ${hasSources ? 'text-gray-800' : 'text-amber-700'}`}>
+                              {ch.sources?.length || 0} {!hasSources && '(Orpheline)'}
+                            </span>
+                          </div>
                         </div>
-                        <div className="text-xs text-gray-500 mb-4 pl-7">
-                          Sources associées :{' '}
-                          <span className={`font-semibold ${hasSources ? 'text-gray-800' : 'text-amber-700'}`}>
-                            {ch.sources?.length || 0} {!hasSources && '(Orpheline)'}
-                          </span>
-                        </div>
-                      </div>
 
-                      <div className="pt-3 border-t border-gray-100 flex items-center justify-between text-xs">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${ch.isActive ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
-                          {ch.isActive ? 'Active' : 'Désactivée'}
-                        </span>
-                        {hasSources ? (
-                          <button
-                            onClick={() => setTestPlayerUrl(`/api/v1/stream/${ch.id}/live.m3u8?token=admin_preview`)}
-                            className="flex items-center gap-1.5 text-blue-600 hover:text-blue-800 font-semibold transition-colors"
-                          >
-                            <Play className="w-3.5 h-3.5 fill-current" /> Lire le flux
-                          </button>
-                        ) : (
-                          <span className="text-gray-400 italic">Aucun flux</span>
-                        )}
+                        <div className="pt-3 border-t border-gray-100 flex items-center justify-between text-xs">
+                          <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${ch.isActive ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
+                            {ch.isActive ? 'Active' : 'Désactivée'}
+                          </span>
+                          {hasSources ? (
+                            <button
+                              onClick={() => setTestPlayerUrl(`/api/v1/stream/${ch.id}/live.m3u8?token=admin_preview`)}
+                              className="flex items-center gap-1.5 text-blue-600 hover:text-blue-800 font-semibold transition-colors"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" /> Lire le flux
+                            </button>
+                          ) : (
+                            <span className="text-gray-400 italic">Aucun flux</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Channels Pagination Controls */}
+              {totalChannelPages > 1 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-gray-200 text-xs text-gray-600">
+                  <div>
+                    Affichage de {((currentChannelPage - 1) * CHANNELS_PER_PAGE) + 1} à {Math.min(currentChannelPage * CHANNELS_PER_PAGE, filteredChannels.length)} sur {filteredChannels.length} chaînes
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      disabled={currentChannelPage <= 1}
+                      onClick={() => setChannelPage(1)}
+                      className="px-2.5 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium transition-colors"
+                    >
+                      « 1
+                    </button>
+                    <button
+                      disabled={currentChannelPage <= 1}
+                      onClick={() => setChannelPage((p) => Math.max(1, p - 1))}
+                      className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium transition-colors"
+                    >
+                      Précédent
+                    </button>
+                    <span className="px-3 py-1.5 font-bold text-gray-900 bg-gray-100 rounded-lg">
+                      {currentChannelPage} / {totalChannelPages}
+                    </span>
+                    <button
+                      disabled={currentChannelPage >= totalChannelPages}
+                      onClick={() => setChannelPage((p) => Math.min(totalChannelPages, p + 1))}
+                      className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium transition-colors"
+                    >
+                      Suivant
+                    </button>
+                    <button
+                      disabled={currentChannelPage >= totalChannelPages}
+                      onClick={() => setChannelPage(totalChannelPages)}
+                      className="px-2.5 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium transition-colors"
+                    >
+                      {totalChannelPages} »
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })()}
@@ -2699,44 +2958,89 @@ export default function App() {
               )}
             </div>
 
-            {/* Vue 1: Importation en cours avec barre d'avancement réelle */}
-            {isImporting ? (
-              <div className="py-8 px-4 flex flex-col items-center justify-center space-y-5">
-                <div className="w-16 h-16 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 animate-pulse shadow-sm">
-                  <UploadCloud className="w-8 h-8 animate-bounce text-blue-600" />
-                </div>
-                <div className="text-center space-y-1">
-                  <h4 className="font-bold text-gray-900 text-base">Importation des chaînes en cours...</h4>
+            {/* Vue 1: Importation en cours ou Suspendue (avec reprise sur coupure réseau) */}
+            {isImporting || importPaused ? (
+              <div className="py-8 px-4 flex flex-col items-center justify-center space-y-5 text-center">
+                {importPaused ? (
+                  <div className="w-16 h-16 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shadow-sm">
+                    <AlertCircle className="w-8 h-8 text-amber-600" />
+                  </div>
+                ) : (
+                  <div className="w-16 h-16 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 animate-pulse shadow-sm">
+                    <UploadCloud className="w-8 h-8 animate-bounce text-blue-600" />
+                  </div>
+                )}
+
+                <div className="space-y-1 max-w-md">
+                  <h4 className="font-bold text-gray-900 text-base">
+                    {importPaused ? "Importation suspendue (Coupure réseau ou pause)" : "Importation des chaînes en cours..."}
+                  </h4>
+                  {importErrorMsg && (
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-left leading-relaxed">
+                      ⚠️ {importErrorMsg}
+                    </p>
+                  )}
                   <p className="text-xs text-gray-500 font-mono">
-                    {importProgress?.current || 0} / {importProgress?.total || 0} chaînes importées dans votre catalogue
+                    {importTotalSaved} / {toImportList.length} chaînes sauvegardées en base de données
                   </p>
                 </div>
 
                 {/* Barre d'avancement animée */}
                 <div className="w-full max-w-md bg-gray-100 rounded-full h-3.5 overflow-hidden border border-gray-200 shadow-inner">
                   <div
-                    className="bg-blue-600 h-full rounded-full transition-all duration-300 ease-out shadow-sm"
-                    style={{ width: `${importProgress?.percent || 0}%` }}
+                    className={`h-full rounded-full transition-all duration-300 ease-out shadow-sm ${importPaused ? 'bg-amber-500' : 'bg-blue-600'}`}
+                    style={{ width: `${Math.round((importTotalSaved / Math.max(1, toImportList.length)) * 100)}%` }}
                   ></div>
                 </div>
 
                 <div className="flex items-center justify-between w-full max-w-md text-xs text-gray-600 font-semibold px-1">
-                  <span className="text-blue-600">{importProgress?.percent || 0}% complété</span>
+                  <span className={importPaused ? 'text-amber-600' : 'text-blue-600'}>
+                    {Math.round((importTotalSaved / Math.max(1, toImportList.length)) * 100)}% complété
+                  </span>
                   <span className="text-gray-400 font-mono">
-                    Lot {Math.ceil((importProgress?.current || 0) / 100)} / {Math.ceil((importProgress?.total || 1) / 100)}
+                    Lot {Math.ceil(importCurrentIndex / 100)} / {Math.ceil(Math.max(1, toImportList.length) / 100)}
                   </span>
                 </div>
 
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      importCancelledRef.current = true;
-                    }}
-                    className="px-5 py-2.5 rounded-full border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 text-xs font-semibold transition-colors shadow-2xs"
-                  >
-                    Arrêter l'importation
-                  </button>
+                <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                  {importPaused ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleResumeImport}
+                        className="px-6 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm flex items-center gap-2 transition-all"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        Reprendre l'importation ({toImportList.length - importCurrentIndex} restantes)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleFinishEarlyImport}
+                        className="px-4 py-2.5 rounded-full border border-gray-300 text-gray-700 hover:bg-gray-100 text-xs font-semibold transition-colors"
+                      >
+                        Clôturer ({importTotalSaved} conservées)
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          importCancelledRef.current = true;
+                        }}
+                        className="px-5 py-2.5 rounded-full border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 text-xs font-semibold transition-colors shadow-2xs"
+                      >
+                        Mettre en pause
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleFinishEarlyImport}
+                        className="px-5 py-2.5 rounded-full border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 text-xs font-semibold transition-colors shadow-2xs"
+                      >
+                        Arrêter et clôturer ici
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             ) : m3uParsedItems.length === 0 ? (

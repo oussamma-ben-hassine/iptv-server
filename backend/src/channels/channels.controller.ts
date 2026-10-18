@@ -157,9 +157,9 @@ export class ChannelsController {
   @Get('admin/channels')
   @UseGuards(AuthGuard)
   @Roles('ADMIN')
-  @ApiOperation({ summary: 'Lister toutes les chaînes (Admin)' })
-  findAllAdmin() {
-    return this.channelsService.findAllAdmin();
+  @ApiOperation({ summary: 'Lister les chaînes (Admin avec pagination optionnelle)' })
+  findAllAdmin(@Query() query?: any) {
+    return this.channelsService.findAllAdmin(query);
   }
 
   @Post('admin/channels')

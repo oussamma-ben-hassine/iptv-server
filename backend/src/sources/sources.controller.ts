@@ -21,8 +21,8 @@ export class SourcesController {
   @UseGuards(AuthGuard)
   @Roles('ADMIN')
   @ApiOperation({ summary: 'Lister toutes les sources IPTV' })
-  findAll() {
-    return this.sourcesService.findAll();
+  findAll(@Query() query?: any) {
+    return this.sourcesService.findAll(query);
   }
 
   @Post()
