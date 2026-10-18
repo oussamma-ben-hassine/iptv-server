@@ -194,7 +194,7 @@ export class SharesService {
         .filter((ch) => ch && ch.isActive);
     } else {
       channelsToExport = await this.prisma.channel.findMany({
-        where: { isActive: true },
+        where: { isActive: true, sources: { some: { isActive: true } } },
         include: {
           category: true,
         },

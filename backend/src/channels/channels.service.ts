@@ -42,6 +42,8 @@ export class ChannelsService {
     const whereClause: any = { isActive: true };
     if (allowedChannelIds && allowedChannelIds.length > 0) {
       whereClause.id = { in: allowedChannelIds };
+    } else {
+      whereClause.sources = { some: { isActive: true } };
     }
 
     const take = query?.limit ? Math.max(1, Number(query.limit)) : undefined;
@@ -53,6 +55,7 @@ export class ChannelsService {
         category: true,
         sources: {
           where: { isActive: true },
+          select: { id: true, name: true, type: true },
           orderBy: { priority: 'asc' },
         },
       },
