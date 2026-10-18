@@ -141,6 +141,11 @@ export class SourcesService {
     return { deletedCount: res.count };
   }
 
+  async deleteAll() {
+    const res = await this.prisma.source.deleteMany({});
+    return { deletedCount: res.count };
+  }
+
   async checkAvailability(id: string) {
     const source = await this.findOne(id);
     if (!source) throw new Error('Source introuvable');

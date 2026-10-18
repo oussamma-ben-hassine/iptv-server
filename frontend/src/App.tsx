@@ -527,6 +527,25 @@ export default function App() {
     }
   };
 
+  const handleDeleteAllSources = async () => {
+    if (
+      !confirm(
+        `Êtes-vous sûr de vouloir supprimer TOUTES les sources IPTV ? Cette action est irréversible.`
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await axios.post('/api/v1/sources/delete-all');
+      alert(`Succès : ${res.data.deletedCount} source(s) supprimée(s).`);
+      setSelectedSourceIds([]);
+      setSourcePage(1);
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur lors de la suppression : ${e.response?.data?.message || e.message}`);
+    }
+  };
+
   const handleBulkCheckSources = async () => {
     if (selectedSourceIds.length === 0) return;
     try {
@@ -594,6 +613,29 @@ export default function App() {
       loadData();
     } catch (e: any) {
       alert(`Erreur de suppression: ${e.response?.data?.message || e.message}`);
+    }
+  };
+
+  const handleDeleteAllChannels = async () => {
+    if (
+      !confirm(
+        `Êtes-vous sûr de vouloir supprimer DÉFINITIVEMENT TOUTES les chaînes de télévision et tous leurs flux ?\n\nCette action va vider entièrement le catalogue de télévision.`
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await axios.post('/api/v1/admin/channels/delete-all');
+      alert(
+        `Succès : ${res.data.deletedChannels} chaîne(s) et ${res.data.deletedSources} source(s) ont été supprimées.`
+      );
+      setSelectedChannelIds([]);
+      setSelectedSourceIds([]);
+      setChannelPage(1);
+      setSourcePage(1);
+      loadData();
+    } catch (e: any) {
+      alert(`Erreur lors de la suppression : ${e.response?.data?.message || e.message}`);
     }
   };
 
@@ -1438,6 +1480,15 @@ export default function App() {
                       {selectedSourceIds.length === filteredSources.length ? 'Désélectionner tout' : 'Tout sélectionner'}
                     </button>
                   )}
+                  {sources.length > 0 && (
+                    <button
+                      onClick={handleDeleteAllSources}
+                      className="py-2.5 px-4 rounded-full bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs"
+                      title="Supprimer toutes les sources vidéo en un seul clic"
+                    >
+                      <Trash2 className="w-4 h-4 text-rose-600" /> Supprimer toutes les sources
+                    </button>
+                  )}
                 </div>
 
                 <div className="text-xs text-gray-500">
@@ -1675,6 +1726,15 @@ export default function App() {
                       className="py-2.5 px-3.5 rounded-full bg-white hover:bg-gray-50 text-gray-700 text-xs font-medium border border-gray-300 shadow-xs transition-all"
                     >
                       {selectedChannelIds.length === filteredChannels.length ? 'Désélectionner tout' : 'Tout sélectionner'}
+                    </button>
+                  )}
+                  {channels.length > 0 && (
+                    <button
+                      onClick={handleDeleteAllChannels}
+                      className="py-2.5 px-4 rounded-full bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs"
+                      title="Supprimer toutes les chaînes de télévision en un seul clic"
+                    >
+                      <Trash2 className="w-4 h-4 text-rose-600" /> Supprimer toutes les chaînes
                     </button>
                   )}
                 </div>

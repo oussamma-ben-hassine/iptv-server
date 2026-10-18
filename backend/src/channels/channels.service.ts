@@ -209,6 +209,17 @@ export class ChannelsService {
     return { cleanedCount: res.count };
   }
 
+  async deleteAll() {
+    const [delSources, delChannels] = await this.prisma.$transaction([
+      this.prisma.source.deleteMany({}),
+      this.prisma.channel.deleteMany({}),
+    ]);
+    return {
+      deletedChannels: delChannels.count,
+      deletedSources: delSources.count,
+    };
+  }
+
   async getCategories() {
     return this.prisma.category.findMany({
       include: {

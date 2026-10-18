@@ -202,6 +202,14 @@ export class ChannelsController {
     return this.channelsService.cleanupOrphans();
   }
 
+  @Post('admin/channels/delete-all')
+  @UseGuards(AuthGuard)
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Supprimer toutes les chaînes de télévision' })
+  deleteAllChannels() {
+    return this.channelsService.deleteAll();
+  }
+
   @Post('admin/categories')
   @UseGuards(AuthGuard)
   @Roles('ADMIN')

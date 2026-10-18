@@ -58,6 +58,14 @@ export class SourcesController {
     return this.sourcesService.deleteMany(ids);
   }
 
+  @Post('delete-all')
+  @UseGuards(AuthGuard)
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Supprimer toutes les sources vidéo' })
+  deleteAll() {
+    return this.sourcesService.deleteAll();
+  }
+
   @Post(':id/check')
   @UseGuards(AuthGuard)
   @Roles('ADMIN')
