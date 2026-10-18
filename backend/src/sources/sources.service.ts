@@ -274,7 +274,7 @@ export class SourcesService {
             slug: chanSlug,
             logoUrl: item.tvgLogo,
             epgChannelId: item.tvgId,
-            categoryId: category.id,
+            categoryId: categoryId,
           },
         });
 
