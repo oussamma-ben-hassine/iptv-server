@@ -735,6 +735,51 @@ export default function App() {
   };
 
   // --- M3U Import Handlers ---
+  const parseM3ULocally = (content: string) => {
+    const lines = content.split(/\r?\n/);
+    const items: any[] = [];
+    let currentItem: any = null;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      if (line.startsWith('#EXTINF:')) {
+        currentItem = {
+          name: 'Chaîne sans nom',
+          url: '',
+          tvgId: null,
+          tvgName: null,
+          tvgLogo: null,
+          group: 'Général',
+        };
+
+        const tvgIdMatch = line.match(/tvg-id="([^"]*)"/i);
+        if (tvgIdMatch) currentItem.tvgId = tvgIdMatch[1];
+
+        const tvgNameMatch = line.match(/tvg-name="([^"]*)"/i);
+        if (tvgNameMatch) currentItem.tvgName = tvgNameMatch[1];
+
+        const tvgLogoMatch = line.match(/tvg-logo="([^"]*)"/i);
+        if (tvgLogoMatch) currentItem.tvgLogo = tvgLogoMatch[1];
+
+        const groupMatch = line.match(/group-title="([^"]*)"/i);
+        if (groupMatch) currentItem.group = groupMatch[1];
+
+        const commaIndex = line.lastIndexOf(',');
+        if (commaIndex !== -1) {
+          currentItem.name = line.substring(commaIndex + 1).trim() || currentItem.name;
+        }
+      } else if (!line.startsWith('#') && currentItem) {
+        currentItem.url = line;
+        items.push({ ...currentItem, index: items.length });
+        currentItem = null;
+      }
+    }
+
+    return items;
+  };
+
   const handlePreviewM3U = async () => {
     if (m3uImportTab === 'url' && !m3uUrlInput.trim()) {
       alert("Veuillez saisir une URL de playlist M3U valide (ex: https://.../playlist.m3u)");
@@ -747,13 +792,22 @@ export default function App() {
 
     try {
       setM3uLoading(true);
-      const payload = m3uImportTab === 'url' ? { url: m3uUrlInput.trim() } : { content: m3uRawText };
-      const res = await axios.post('/api/v1/sources/m3u/preview', payload);
-      if (!res.data || res.data.length === 0) {
+      let parsed: any[] = [];
+
+      if (m3uImportTab === 'text') {
+        // Traitement local immédiat : aucune limite de taille HTTP
+        parsed = parseM3ULocally(m3uRawText);
+      } else {
+        // Requête vers le backend pour télécharger et analyser la playlist distante
+        const res = await axios.post('/api/v1/sources/m3u/preview', { url: m3uUrlInput.trim() });
+        parsed = res.data || [];
+      }
+
+      if (!parsed || parsed.length === 0) {
         alert("Aucun flux ou chaîne valide n'a été détecté dans cette playlist M3U.");
       }
-      setM3uParsedItems(res.data || []);
-      setSelectedM3uItems((res.data || []).map((_: any, idx: number) => idx));
+      setM3uParsedItems(parsed);
+      setSelectedM3uItems(parsed.map((_: any, idx: number) => idx));
     } catch (e: any) {
       alert(`Erreur de lecture M3U: ${e.response?.data?.message || e.message}`);
     } finally {
@@ -775,15 +829,29 @@ export default function App() {
 
   const handleConfirmImportM3U = async () => {
     const toImport = m3uParsedItems.filter((_, idx) => selectedM3uItems.includes(idx));
+    if (toImport.length === 0) return;
+
     try {
-      const res = await axios.post('/api/v1/sources/m3u/import', { items: toImport });
-      alert(`Import terminé avec succès : ${res.data.importedCount} chaînes importées.`);
+      setM3uLoading(true);
+      const chunkSize = 100;
+      let totalImported = 0;
+
+      for (let i = 0; i < toImport.length; i += chunkSize) {
+        const chunk = toImport.slice(i, i + chunkSize);
+        const res = await axios.post('/api/v1/sources/m3u/import', { items: chunk });
+        totalImported += (res.data?.importedCount || 0);
+      }
+
+      alert(`Import terminé avec succès : ${totalImported} chaînes importées.`);
       setM3uPreviewModal(false);
       setM3uRawText('');
+      setM3uUrlInput('');
       setM3uParsedItems([]);
       loadData();
     } catch (e: any) {
       alert(`Erreur d'import: ${e.response?.data?.message || e.message}`);
+    } finally {
+      setM3uLoading(false);
     }
   };
 
