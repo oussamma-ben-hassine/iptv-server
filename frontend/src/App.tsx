@@ -40,6 +40,11 @@ import {
   Link as LinkIcon,
   FileText,
   Download,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  AlertCircle,
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -135,7 +140,14 @@ export default function App() {
   const [m3uImportTab, setM3uImportTab] = useState<'url' | 'text'>('url');
   const [m3uUrlInput, setM3uUrlInput] = useState('');
   const [m3uRawText, setM3uRawText] = useState('');
+  const [m3uFile, setM3uFile] = useState<File | null>(null);
   const [m3uLoading, setM3uLoading] = useState(false);
+  const [parseProgress, setParseProgress] = useState(0);
+  const [parseStatus, setParseStatus] = useState('');
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number; percent: number } | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const importCancelledRef = useRef(false);
+  const [m3uPage, setM3uPage] = useState(1);
   const [m3uSearchTerm, setM3uSearchTerm] = useState('');
   const [m3uParsedItems, setM3uParsedItems] = useState<any[]>([]);
   const [selectedM3uItems, setSelectedM3uItems] = useState<number[]>([]);
@@ -734,14 +746,94 @@ export default function App() {
     }
   };
 
-  // --- M3U Import Handlers ---
-  const parseM3ULocally = (content: string) => {
-    const lines = content.split(/\r?\n/);
+  // --- M3U Import Handlers (Streaming & Non-blocking) ---
+  const parseM3UFileStreaming = async (file: File) => {
+    const totalBytes = file.size;
+    let bytesRead = 0;
+    const chunkSize = 256 * 1024; // 256 KB par tranche
+    let offset = 0;
+    let leftover = '';
     const items: any[] = [];
     let currentItem: any = null;
 
-    for (const rawLine of lines) {
-      const line = rawLine.trim();
+    setParseProgress(0);
+    setParseStatus(`Lecture de ${file.name} (0 / ${(totalBytes / (1024 * 1024)).toFixed(1)} Mo)...`);
+
+    while (offset < totalBytes) {
+      const slice = file.slice(offset, offset + chunkSize);
+      const textChunk = await slice.text();
+      bytesRead += slice.size;
+      offset += chunkSize;
+
+      const combined = leftover + textChunk;
+      const lines = combined.split(/\r?\n/);
+      leftover = lines.pop() || '';
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        if (line.startsWith('#EXTINF:')) {
+          currentItem = {
+            name: 'Chaîne sans nom',
+            url: '',
+            tvgId: null,
+            tvgName: null,
+            tvgLogo: null,
+            group: 'Général',
+          };
+
+          const tvgIdMatch = line.match(/tvg-id="([^"]*)"/i);
+          if (tvgIdMatch) currentItem.tvgId = tvgIdMatch[1];
+
+          const tvgNameMatch = line.match(/tvg-name="([^"]*)"/i);
+          if (tvgNameMatch) currentItem.tvgName = tvgNameMatch[1];
+
+          const tvgLogoMatch = line.match(/tvg-logo="([^"]*)"/i);
+          if (tvgLogoMatch) currentItem.tvgLogo = tvgLogoMatch[1];
+
+          const groupMatch = line.match(/group-title="([^"]*)"/i);
+          if (groupMatch) currentItem.group = groupMatch[1];
+
+          const commaIndex = line.lastIndexOf(',');
+          if (commaIndex !== -1) {
+            currentItem.name = line.substring(commaIndex + 1).trim() || currentItem.name;
+          }
+        } else if (!line.startsWith('#') && currentItem) {
+          currentItem.url = line;
+          items.push({ ...currentItem, index: items.length });
+          currentItem = null;
+        }
+      }
+
+      // Mise à jour de la barre d'avancement & respiration pour le navigateur (ne plante jamais)
+      const pct = Math.min(99, Math.round((bytesRead / totalBytes) * 100));
+      setParseProgress(pct);
+      setParseStatus(`Analyse en cours : ${pct}% (${items.length} chaînes détectées)...`);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    if (leftover && leftover.trim() && !leftover.trim().startsWith('#') && currentItem) {
+      currentItem.url = leftover.trim();
+      items.push({ ...currentItem, index: items.length });
+    }
+
+    setParseProgress(100);
+    setParseStatus(`Analyse terminée : ${items.length} chaînes trouvées !`);
+    return items;
+  };
+
+  const parseM3ULocallyAsync = async (content: string) => {
+    const lines = content.split(/\r?\n/);
+    const totalLines = lines.length;
+    const items: any[] = [];
+    let currentItem: any = null;
+
+    setParseProgress(0);
+    setParseStatus(`Traitement de ${totalLines} lignes...`);
+
+    for (let i = 0; i < totalLines; i++) {
+      const line = lines[i].trim();
       if (!line) continue;
 
       if (line.startsWith('#EXTINF:')) {
@@ -775,8 +867,17 @@ export default function App() {
         items.push({ ...currentItem, index: items.length });
         currentItem = null;
       }
+
+      if (i % 500 === 0) {
+        const pct = Math.round((i / totalLines) * 100);
+        setParseProgress(pct);
+        setParseStatus(`Analyse en cours : ${pct}% (${items.length} chaînes détectées)...`);
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
 
+    setParseProgress(100);
+    setParseStatus(`Terminé : ${items.length} chaînes trouvées`);
     return items;
   };
 
@@ -785,20 +886,25 @@ export default function App() {
       alert("Veuillez saisir une URL de playlist M3U valide (ex: https://.../playlist.m3u)");
       return;
     }
-    if (m3uImportTab === 'text' && !m3uRawText.trim()) {
-      alert("Veuillez coller le contenu de la playlist M3U ou sélectionner un fichier .m3u");
+    if (m3uImportTab === 'text' && !m3uFile && !m3uRawText.trim()) {
+      alert("Veuillez choisir un fichier .m3u ou coller le contenu de la playlist");
       return;
     }
 
     try {
       setM3uLoading(true);
+      setParseProgress(0);
+      setParseStatus('Initialisation de l\'analyse...');
       let parsed: any[] = [];
 
       if (m3uImportTab === 'text') {
-        // Traitement local immédiat : aucune limite de taille HTTP
-        parsed = parseM3ULocally(m3uRawText);
+        if (m3uFile) {
+          parsed = await parseM3UFileStreaming(m3uFile);
+        } else {
+          parsed = await parseM3ULocallyAsync(m3uRawText);
+        }
       } else {
-        // Requête vers le backend pour télécharger et analyser la playlist distante
+        setParseStatus('Téléchargement de la playlist distante en cours...');
         const res = await axios.post('/api/v1/sources/m3u/preview', { url: m3uUrlInput.trim() });
         parsed = res.data || [];
       }
@@ -808,23 +914,22 @@ export default function App() {
       }
       setM3uParsedItems(parsed);
       setSelectedM3uItems(parsed.map((_: any, idx: number) => idx));
+      setM3uPage(1);
     } catch (e: any) {
       alert(`Erreur de lecture M3U: ${e.response?.data?.message || e.message}`);
     } finally {
       setM3uLoading(false);
+      setParseProgress(0);
+      setParseStatus('');
     }
   };
 
   const handleM3uFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      setM3uRawText(content);
-      setM3uImportTab('text');
-    };
-    reader.readAsText(file);
+    setM3uFile(file);
+    setM3uRawText('');
+    setM3uImportTab('text');
   };
 
   const handleConfirmImportM3U = async () => {
@@ -832,26 +937,42 @@ export default function App() {
     if (toImport.length === 0) return;
 
     try {
-      setM3uLoading(true);
-      const chunkSize = 100;
+      setIsImporting(true);
+      importCancelledRef.current = false;
+      const batchSize = 100;
       let totalImported = 0;
+      setImportProgress({ current: 0, total: toImport.length, percent: 0 });
 
-      for (let i = 0; i < toImport.length; i += chunkSize) {
-        const chunk = toImport.slice(i, i + chunkSize);
+      for (let i = 0; i < toImport.length; i += batchSize) {
+        if (importCancelledRef.current) {
+          alert(`Importation arrêtée par l'utilisateur. ${totalImported} chaînes ont été importées avec succès.`);
+          break;
+        }
+
+        const chunk = toImport.slice(i, i + batchSize);
         const res = await axios.post('/api/v1/sources/m3u/import', { items: chunk });
         totalImported += (res.data?.importedCount || 0);
+
+        const currentCount = Math.min(toImport.length, i + chunk.length);
+        const percent = Math.round((currentCount / toImport.length) * 100);
+        setImportProgress({ current: currentCount, total: toImport.length, percent });
       }
 
-      alert(`Import terminé avec succès : ${totalImported} chaînes importées.`);
+      if (!importCancelledRef.current) {
+        alert(`Import terminé avec succès : ${totalImported} chaînes importées.`);
+      }
+
       setM3uPreviewModal(false);
       setM3uRawText('');
+      setM3uFile(null);
       setM3uUrlInput('');
       setM3uParsedItems([]);
       loadData();
     } catch (e: any) {
       alert(`Erreur d'import: ${e.response?.data?.message || e.message}`);
     } finally {
-      setM3uLoading(false);
+      setIsImporting(false);
+      setImportProgress(null);
     }
   };
 
@@ -2559,22 +2680,66 @@ export default function App() {
                   Importer une Playlist M3U
                 </h3>
                 <p className="text-gray-500 text-xs mt-0.5">
-                  Importez vos chaînes et flux de média depuis une URL distante ou un fichier texte M3U.
+                  Importez vos chaînes et flux de média volumineux (fichiers de 20 Mo+ supportés en streaming).
                 </p>
               </div>
-              <button
-                onClick={() => {
-                  setM3uPreviewModal(false);
-                  setM3uParsedItems([]);
-                  setM3uSearchTerm('');
-                }}
-                className="p-1.5 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              {!isImporting && (
+                <button
+                  onClick={() => {
+                    setM3uPreviewModal(false);
+                    setM3uParsedItems([]);
+                    setM3uFile(null);
+                    setM3uSearchTerm('');
+                    setM3uPage(1);
+                  }}
+                  className="p-1.5 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-700"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
             </div>
 
-            {m3uParsedItems.length === 0 ? (
+            {/* Vue 1: Importation en cours avec barre d'avancement réelle */}
+            {isImporting ? (
+              <div className="py-8 px-4 flex flex-col items-center justify-center space-y-5">
+                <div className="w-16 h-16 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 animate-pulse shadow-sm">
+                  <UploadCloud className="w-8 h-8 animate-bounce text-blue-600" />
+                </div>
+                <div className="text-center space-y-1">
+                  <h4 className="font-bold text-gray-900 text-base">Importation des chaînes en cours...</h4>
+                  <p className="text-xs text-gray-500 font-mono">
+                    {importProgress?.current || 0} / {importProgress?.total || 0} chaînes importées dans votre catalogue
+                  </p>
+                </div>
+
+                {/* Barre d'avancement animée */}
+                <div className="w-full max-w-md bg-gray-100 rounded-full h-3.5 overflow-hidden border border-gray-200 shadow-inner">
+                  <div
+                    className="bg-blue-600 h-full rounded-full transition-all duration-300 ease-out shadow-sm"
+                    style={{ width: `${importProgress?.percent || 0}%` }}
+                  ></div>
+                </div>
+
+                <div className="flex items-center justify-between w-full max-w-md text-xs text-gray-600 font-semibold px-1">
+                  <span className="text-blue-600">{importProgress?.percent || 0}% complété</span>
+                  <span className="text-gray-400 font-mono">
+                    Lot {Math.ceil((importProgress?.current || 0) / 100)} / {Math.ceil((importProgress?.total || 1) / 100)}
+                  </span>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      importCancelledRef.current = true;
+                    }}
+                    className="px-5 py-2.5 rounded-full border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 text-xs font-semibold transition-colors shadow-2xs"
+                  >
+                    Arrêter l'importation
+                  </button>
+                </div>
+              </div>
+            ) : m3uParsedItems.length === 0 ? (
               <div className="space-y-4">
                 {/* Mode Selector Tabs */}
                 <div className="flex bg-gray-100 p-1 rounded-2xl gap-1">
@@ -2600,7 +2765,7 @@ export default function App() {
                     }`}
                   >
                     <FileText className="w-4 h-4 text-blue-600" />
-                    Texte ou Fichier local
+                    Fichier local ou Texte brut
                   </button>
                 </div>
 
@@ -2630,35 +2795,86 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <label className="block text-xs font-semibold text-gray-700">
-                        Contenu brut de la playlist M3U
-                      </label>
-                      <label className="cursor-pointer text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1">
-                        <UploadCloud className="w-4 h-4" />
-                        Charger un fichier .m3u
-                        <input
-                          type="file"
-                          accept=".m3u,.m3u8,text/plain"
-                          onChange={handleM3uFileUpload}
-                          className="hidden"
-                        />
-                      </label>
+                    {/* Fichier M3U sélectionné en streaming */}
+                    {m3uFile ? (
+                      <div className="p-4 bg-blue-50/80 border border-blue-200 rounded-2xl flex items-center justify-between shadow-2xs">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="p-3 bg-blue-600 text-white rounded-xl shadow-xs">
+                            <FileText className="w-5 h-5" />
+                          </div>
+                          <div className="truncate">
+                            <p className="font-bold text-gray-900 text-xs truncate">{m3uFile.name}</p>
+                            <p className="text-[11px] text-gray-500 font-mono">
+                              {(m3uFile.size / (1024 * 1024)).toFixed(2)} Mo • Fichier volumineux prêt pour l'analyse en continu
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setM3uFile(null)}
+                          className="p-1.5 rounded-full hover:bg-blue-100 text-gray-400 hover:text-red-600 transition-colors"
+                          title="Changer de fichier"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <label className="block text-xs font-semibold text-gray-700">
+                            Sélectionner un fichier ou coller le contenu
+                          </label>
+                          <label className="cursor-pointer text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100/80 px-3 py-1.5 rounded-full transition-colors">
+                            <UploadCloud className="w-4 h-4" />
+                            Choisir un fichier M3U (même 20 Mo+)
+                            <input
+                              type="file"
+                              accept=".m3u,.m3u8,text/plain"
+                              onChange={handleM3uFileUpload}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+                        <textarea
+                          rows={6}
+                          placeholder="#EXTM3U&#10;#EXTINF:-1 tvg-id='aljazeera' group-title='News',Al Jazeera&#10;https://.../stream.m3u8"
+                          value={m3uRawText}
+                          onChange={(e) => setM3uRawText(e.target.value)}
+                          className="w-full p-3 rounded-xl bg-white border border-gray-300 text-gray-900 font-mono text-xs focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 shadow-2xs"
+                        ></textarea>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Barre d'avancement lors de l'analyse */}
+                {m3uLoading && (
+                  <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-gray-700">
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin" />
+                        {parseStatus || 'Analyse en cours...'}
+                      </span>
+                      {parseProgress > 0 && <span className="text-blue-600">{parseProgress}%</span>}
                     </div>
-                    <textarea
-                      rows={8}
-                      placeholder="#EXTM3U&#10;#EXTINF:-1 tvg-id='aljazeera' group-title='News',Al Jazeera&#10;https://.../stream.m3u8"
-                      value={m3uRawText}
-                      onChange={(e) => setM3uRawText(e.target.value)}
-                      className="w-full p-3 rounded-xl bg-white border border-gray-300 text-gray-900 font-mono text-xs focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 shadow-2xs"
-                    ></textarea>
+                    {parseProgress > 0 && (
+                      <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                        <div
+                          className="bg-blue-600 h-full rounded-full transition-all duration-200"
+                          style={{ width: `${parseProgress}%` }}
+                        ></div>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 <div className="flex justify-end gap-3 pt-2">
                   <button
                     type="button"
-                    onClick={() => setM3uPreviewModal(false)}
+                    onClick={() => {
+                      setM3uPreviewModal(false);
+                      setM3uFile(null);
+                    }}
                     className="px-4 py-2 rounded-full text-gray-600 hover:text-gray-900 text-xs hover:bg-gray-100"
                   >
                     Fermer
@@ -2670,118 +2886,185 @@ export default function App() {
                     className="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-xs flex items-center gap-2 disabled:opacity-50"
                   >
                     {m3uLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {m3uLoading ? 'Téléchargement & Analyse...' : 'Prévisualiser les flux'}
+                    {m3uLoading ? 'Analyse en continu...' : 'Analyser et découper les flux'}
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="flex-1 flex flex-col min-h-0 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-gray-100">
-                  <div className="text-xs text-gray-700 font-semibold">
-                    <span className="text-blue-600 font-bold">{m3uParsedItems.length}</span> chaînes trouvées (
-                    <span className="text-green-600 font-bold">{selectedM3uItems.length}</span> sélectionnées)
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedM3uItems(m3uParsedItems.map((_, i) => i))}
-                      className="text-xs text-blue-600 hover:text-blue-800 font-semibold"
-                    >
-                      Tout cocher
-                    </button>
-                    <span className="text-gray-300">|</span>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedM3uItems([])}
-                      className="text-xs text-gray-500 hover:text-gray-700 font-semibold"
-                    >
-                      Tout décocher
-                    </button>
-                  </div>
-                </div>
+              // Vue 3 : Liste paginée fluide des chaînes analysées
+              (() => {
+                const q = m3uSearchTerm.toLowerCase();
+                const filtered = m3uParsedItems
+                  .map((item, originalIdx) => ({ ...item, originalIdx }))
+                  .filter((item) => {
+                    if (!q.trim()) return true;
+                    return (
+                      (item.name && item.name.toLowerCase().includes(q)) ||
+                      (item.group && item.group.toLowerCase().includes(q))
+                    );
+                  });
+                const totalPages = Math.max(1, Math.ceil(filtered.length / 50));
+                const safePage = Math.min(Math.max(1, m3uPage), totalPages);
+                const pageItems = filtered.slice((safePage - 1) * 50, safePage * 50);
 
-                {/* Filter input */}
-                <div className="relative">
-                  <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="Filtrer les chaînes par nom ou catégorie..."
-                    value={m3uSearchTerm}
-                    onChange={(e) => setM3uSearchTerm(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-gray-50 border border-gray-200 text-gray-900 text-xs focus:outline-none focus:border-blue-600 focus:bg-white"
-                  />
-                </div>
+                return (
+                  <div className="flex-1 flex flex-col min-h-0 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-gray-100">
+                      <div className="text-xs text-gray-700 font-semibold">
+                        <span className="text-blue-600 font-bold">{m3uParsedItems.length}</span> chaînes trouvées (
+                        <span className="text-green-600 font-bold">{selectedM3uItems.length}</span> sélectionnées)
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedM3uItems(m3uParsedItems.map((_, i) => i))}
+                          className="text-xs text-blue-600 hover:text-blue-800 font-semibold"
+                        >
+                          Tout cocher
+                        </button>
+                        <span className="text-gray-300">|</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedM3uItems([])}
+                          className="text-xs text-gray-500 hover:text-gray-700 font-semibold"
+                        >
+                          Tout décocher
+                        </button>
+                      </div>
+                    </div>
 
-                {/* Items list */}
-                <div className="flex-1 overflow-y-auto border border-gray-200 rounded-2xl bg-gray-50/50 p-2 space-y-1 max-h-[45vh]">
-                  {m3uParsedItems
-                    .map((item, originalIdx) => ({ ...item, originalIdx }))
-                    .filter((item) => {
-                      if (!m3uSearchTerm.trim()) return true;
-                      const q = m3uSearchTerm.toLowerCase();
-                      return (
-                        (item.name && item.name.toLowerCase().includes(q)) ||
-                        (item.group && item.group.toLowerCase().includes(q))
-                      );
-                    })
-                    .map((item) => (
-                      <label
-                        key={item.originalIdx}
-                        className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white text-xs text-gray-800 cursor-pointer transition-colors border border-transparent hover:border-gray-200"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedM3uItems.includes(item.originalIdx)}
-                          onChange={(e) => {
-                            if (e.target.checked) setSelectedM3uItems([...selectedM3uItems, item.originalIdx]);
-                            else setSelectedM3uItems(selectedM3uItems.filter((i) => i !== item.originalIdx));
-                          }}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        {item.tvgLogo && (
-                          <img
-                            src={item.tvgLogo}
-                            alt=""
-                            className="w-6 h-6 object-contain rounded bg-white border border-gray-100 flex-shrink-0"
-                            onError={(e) => ((e.target as HTMLElement).style.display = 'none')}
-                          />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-gray-900 truncate">{item.name}</span>
-                            {item.group && (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] bg-gray-200 text-gray-700 flex-shrink-0">
-                                {item.group}
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-gray-400 truncate block text-[10px] font-mono">{item.url}</span>
+                    {/* Filter input */}
+                    <div className="relative">
+                      <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Filtrer parmi les chaînes par nom ou catégorie..."
+                        value={m3uSearchTerm}
+                        onChange={(e) => {
+                          setM3uSearchTerm(e.target.value);
+                          setM3uPage(1);
+                        }}
+                        className="w-full pl-9 pr-3 py-2 rounded-xl bg-gray-50 border border-gray-200 text-gray-900 text-xs focus:outline-none focus:border-blue-600 focus:bg-white"
+                      />
+                    </div>
+
+                    {/* Items list paginée (50 par page) pour une fluidité 100% sans plantage */}
+                    <div className="flex-1 overflow-y-auto border border-gray-200 rounded-2xl bg-gray-50/50 p-2 space-y-1 max-h-[42vh]">
+                      {pageItems.length === 0 ? (
+                        <div className="p-8 text-center text-xs text-gray-400">
+                          Aucune chaîne ne correspond à votre recherche.
                         </div>
-                      </label>
-                    ))}
-                </div>
+                      ) : (
+                        pageItems.map((item) => (
+                          <label
+                            key={item.originalIdx}
+                            className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white text-xs text-gray-800 cursor-pointer transition-colors border border-transparent hover:border-gray-200"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedM3uItems.includes(item.originalIdx)}
+                              onChange={(e) => {
+                                if (e.target.checked) setSelectedM3uItems([...selectedM3uItems, item.originalIdx]);
+                                else setSelectedM3uItems(selectedM3uItems.filter((i) => i !== item.originalIdx));
+                              }}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            {item.tvgLogo && (
+                              <img
+                                src={item.tvgLogo}
+                                alt=""
+                                className="w-6 h-6 object-contain rounded bg-white border border-gray-100 flex-shrink-0"
+                                onError={(e) => ((e.target as HTMLElement).style.display = 'none')}
+                              />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-gray-900 truncate">{item.name}</span>
+                                {item.group && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-gray-200 text-gray-700 flex-shrink-0">
+                                    {item.group}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-gray-400 truncate block text-[10px] font-mono">{item.url}</span>
+                            </div>
+                          </label>
+                        ))
+                      )}
+                    </div>
 
-                <div className="flex justify-end gap-3 pt-3 border-t border-gray-100">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setM3uParsedItems([]);
-                      setM3uSearchTerm('');
-                    }}
-                    className="px-4 py-2 rounded-full text-gray-600 hover:text-gray-900 text-xs hover:bg-gray-100"
-                  >
-                    Retour
-                  </button>
-                  <button
-                    type="button"
-                    disabled={selectedM3uItems.length === 0}
-                    onClick={handleConfirmImportM3U}
-                    className="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-xs disabled:opacity-50"
-                  >
-                    Confirmer l'import ({selectedM3uItems.length} chaînes)
-                  </button>
-                </div>
-              </div>
+                    {/* Pagination Controls */}
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-between px-2 py-1.5 bg-gray-50 rounded-xl text-xs text-gray-600">
+                        <span>
+                          Page <strong className="text-gray-900">{safePage}</strong> sur <strong>{totalPages}</strong> ({filtered.length} chaînes)
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={safePage <= 1}
+                            onClick={() => setM3uPage(1)}
+                            className="p-1 rounded-lg hover:bg-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
+                            title="Première page"
+                          >
+                            <ChevronsLeft className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={safePage <= 1}
+                            onClick={() => setM3uPage(safePage - 1)}
+                            className="p-1 rounded-lg hover:bg-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
+                            title="Page précédente"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          <span className="px-2 font-mono font-semibold text-blue-600">{safePage}</span>
+                          <button
+                            type="button"
+                            disabled={safePage >= totalPages}
+                            onClick={() => setM3uPage(safePage + 1)}
+                            className="p-1 rounded-lg hover:bg-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
+                            title="Page suivante"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={safePage >= totalPages}
+                            onClick={() => setM3uPage(totalPages)}
+                            className="p-1 rounded-lg hover:bg-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
+                            title="Dernière page"
+                          >
+                            <ChevronsRight className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex justify-end gap-3 pt-3 border-t border-gray-100">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setM3uParsedItems([]);
+                          setM3uSearchTerm('');
+                          setM3uPage(1);
+                        }}
+                        className="px-4 py-2 rounded-full text-gray-600 hover:text-gray-900 text-xs hover:bg-gray-100"
+                      >
+                        Retour
+                      </button>
+                      <button
+                        type="button"
+                        disabled={selectedM3uItems.length === 0}
+                        onClick={handleConfirmImportM3U}
+                        className="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-xs disabled:opacity-50"
+                      >
+                        Confirmer l'import ({selectedM3uItems.length} chaînes)
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()
             )}
           </div>
         </div>

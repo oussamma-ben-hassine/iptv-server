@@ -241,19 +241,25 @@ export class SourcesService {
     tvgId?: string;
   }>) {
     const results = [];
+    const categoryCache = new Map<string, string>(); // slugCat -> category.id
 
     for (const item of selectedItems) {
       try {
         const safeUrl = this.security.validateStreamUrl(item.url);
 
-        // 1. Get or create category
+        // 1. Get or create category with cache
         const catName = item.group || 'Général';
         const slugCat = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-        const category = await this.prisma.category.upsert({
-          where: { slug: slugCat },
-          update: {},
-          create: { name: catName, slug: slugCat },
-        });
+        let categoryId = categoryCache.get(slugCat);
+        if (!categoryId) {
+          const category = await this.prisma.category.upsert({
+            where: { slug: slugCat },
+            update: {},
+            create: { name: catName, slug: slugCat },
+          });
+          categoryId = category.id;
+          categoryCache.set(slugCat, categoryId);
+        }
 
         // 2. Channel slug
         const chanSlug = item.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
