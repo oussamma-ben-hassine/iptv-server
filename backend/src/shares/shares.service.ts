@@ -187,10 +187,22 @@ export class SharesService {
 
     let m3u = '#EXTM3U url-tvg="' + this.baseUrl + '/api/v1/epg"\n\n';
 
-    for (const item of share.allowedChannels) {
-      const ch = item.channel;
-      if (!ch.isActive) continue;
+    let channelsToExport: any[] = [];
+    if (share.allowedChannels && share.allowedChannels.length > 0) {
+      channelsToExport = share.allowedChannels
+        .map((item) => item.channel)
+        .filter((ch) => ch && ch.isActive);
+    } else {
+      channelsToExport = await this.prisma.channel.findMany({
+        where: { isActive: true },
+        include: {
+          category: true,
+        },
+        orderBy: { sortOrder: 'asc' },
+      });
+    }
 
+    for (const ch of channelsToExport) {
       const tvgId = ch.epgChannelId || ch.slug;
       const logo = ch.logoUrl || '';
       const group = ch.category?.name || 'Général';

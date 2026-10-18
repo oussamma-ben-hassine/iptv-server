@@ -1729,6 +1729,16 @@ export default function App() {
                     </button>
                   )}
                   {channels.length > 0 && (
+                    <a
+                      href="/api/v1/channels.m3u"
+                      download="catalogue-iptv-complet.m3u"
+                      className="py-2.5 px-4 rounded-full bg-white hover:bg-gray-50 text-gray-700 font-medium text-xs sm:text-sm flex items-center gap-2 border border-gray-300 shadow-xs transition-all"
+                      title="Télécharger l'intégralité du catalogue TV en playlist M3U (sans limite de nombre)"
+                    >
+                      <Download className="w-4 h-4 text-blue-600" /> Exporter M3U (Illimité)
+                    </a>
+                  )}
+                  {channels.length > 0 && (
                     <button
                       onClick={handleDeleteAllChannels}
                       className="py-2.5 px-4 rounded-full bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs"

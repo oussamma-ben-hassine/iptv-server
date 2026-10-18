@@ -44,7 +44,7 @@ export class ChannelsService {
       whereClause.id = { in: allowedChannelIds };
     }
 
-    const channels = await this.prisma.channel.findMany({
+    const findOptions: any = {
       where: whereClause,
       include: {
         category: true,
@@ -54,8 +54,16 @@ export class ChannelsService {
         },
       },
       orderBy: { sortOrder: 'asc' },
-      take: 2000,
-    });
+    };
+
+    if (query?.limit) {
+      findOptions.take = Math.max(1, Number(query.limit));
+      if (query?.page) {
+        findOptions.skip = (Math.max(1, Number(query.page)) - 1) * findOptions.take;
+      }
+    }
+
+    const channels = await this.prisma.channel.findMany(findOptions);
 
     return channels.map((ch, index) => {
       const streamUrl = `${host}/api/v1/stream/${ch.id}/live.m3u8?token=${targetToken}`;
@@ -97,7 +105,6 @@ export class ChannelsService {
           },
         },
         orderBy: { sortOrder: 'asc' },
-        take: 2000,
       });
     }
 

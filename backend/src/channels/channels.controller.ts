@@ -9,7 +9,9 @@ import {
   UseGuards,
   Query,
   Headers,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ChannelsService } from './channels.service';
 import { AuthGuard, Roles } from '../auth/auth.guard';
@@ -35,6 +37,31 @@ export class ChannelsController {
       }
     }
     return this.channelsService.findAllPublic(activeToken);
+  }
+
+  @Get('channels.m3u')
+  @ApiOperation({ summary: 'Télécharger la playlist M3U complète sans aucune limite' })
+  async downloadFullM3U(
+    @Query('token') token: string,
+    @Res() res: Response,
+  ) {
+    const channels = await this.channelsService.findAllPublic(token);
+    const host = (process.env.APP_URL || 'https://iptv.oussamma.tn').replace(/\/$/, '');
+
+    let m3u = '#EXTM3U url-tvg="' + host + '/api/v1/epg"\n\n';
+    for (const ch of channels) {
+      const tvgId = ch.epgId || ch.slug;
+      const logo = ch.logo || ch.logoUrl || '';
+      const group = ch.category || ch.group || 'Général';
+      const playUrl = ch.streamUrl;
+
+      m3u += `#EXTINF:-1 tvg-id="${tvgId}" tvg-name="${ch.name}" tvg-logo="${logo}" group-title="${group}",${ch.name}\n`;
+      m3u += `${playUrl}\n\n`;
+    }
+
+    res.setHeader('Content-Type', 'audio/x-mpegurl; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="catalogue-iptv-complet.m3u"');
+    return res.send(m3u);
   }
 
   @Get('channels/:id')
